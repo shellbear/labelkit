@@ -24,7 +24,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A bare SPM binary launches as an accessory process: no Dock icon,
         // no menu bar, no key window. Promote it to a regular app.
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        activateFront()
+        // The SwiftUI window may not exist yet on the first pass.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { Self.activateFront() }
+    }
+
+    private func activateFront() { Self.activateFront() }
+
+    /// macOS 14+ activation is cooperative: a terminal-spawned process is
+    /// refused focus unless the frontmost app (the terminal) formally yields
+    /// via activate(from:). Fall back to the classic call otherwise.
+    private static func activateFront() {
+        let current = NSRunningApplication.current
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           frontmost.processIdentifier != current.processIdentifier {
+            current.activate(from: frontmost, options: [])
+        } else {
+            NSApp.activate()
+        }
+        NSApp.windows.first?.makeKeyAndOrderFront(nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
