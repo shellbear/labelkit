@@ -35,11 +35,17 @@ labelkit's contract:
 ## Install
 
 ```bash
-brew tap shellbear/tap && brew install labelkit   # soon
-# or from source (macOS 14+, Xcode 15+):
+brew install shellbear/tap/labelkit
+```
+
+Prebuilt universal binaries (arm64 + x86_64) also hang off every
+[GitHub release](https://github.com/shellbear/labelkit/releases). Or from
+source (macOS 14+, Xcode 15+):
+
+```bash
 git clone https://github.com/shellbear/labelkit && cd labelkit
-swift build -c release
-cp .build/release/labelkit /usr/local/bin/
+./scripts/package-app.sh
+cp .build/release/labelkit /opt/homebrew/bin/ && cp -R .build/release/labelkit.app /opt/homebrew/bin/
 ```
 
 ## Usage
