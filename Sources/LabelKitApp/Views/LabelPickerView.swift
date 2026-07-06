@@ -13,6 +13,7 @@ struct LabelPickerView: View {
     @Environment(\.undoManager) private var undoManager
 
     var body: some View {
+        let usage = store.labelUsage()
         List {
             Section("Labels") {
                 ForEach(Array(store.labels.ordered.enumerated()), id: \.element) { index, label in
@@ -30,7 +31,15 @@ struct LabelPickerView: View {
                                     .foregroundStyle(.secondary)
                                     .help("Applied to newly drawn boxes")
                             }
-                            if index < 9 {
+                            if usage[label, default: 0] == 0 {
+                                Button {
+                                    deleteLabel(label)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Delete unused label")
+                            } else if index < 9 {
                                 Text("\(index + 1)")
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(.tertiary)
@@ -39,6 +48,9 @@ struct LabelPickerView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .help(usage[label, default: 0] > 0
+                          ? "\(usage[label, default: 0]) box(es) use this label — delete them first to remove it"
+                          : "Unused label")
                 }
 
                 HStack {
@@ -87,6 +99,16 @@ struct LabelPickerView: View {
                 }
                 Spacer()
                 Button {
+                    store.toggleBoxHidden(id: box.id, in: entry)
+                } label: {
+                    Image(systemName: box.isHidden ? "eye.slash" : "eye")
+                        .foregroundStyle(box.isHidden ? .secondary : .primary)
+                }
+                .buttonStyle(.borderless)
+                .help(box.isHidden
+                      ? "Show box (session only — hidden boxes still save)"
+                      : "Hide box on the canvas (H on selected)")
+                Button {
                     store.removeBox(id: box.id, from: entry, undoManager: undoManager)
                     if isSelected { viewModel.selectedBoxID = nil }
                 } label: {
@@ -95,6 +117,7 @@ struct LabelPickerView: View {
                 .buttonStyle(.borderless)
                 .help("Delete box (undo with ⌘Z)")
             }
+            .opacity(box.isHidden ? 0.5 : 1)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -114,5 +137,12 @@ struct LabelPickerView: View {
         store.addLabel(trimmed)
         viewModel.drawLabel = trimmed
         newLabel = ""
+    }
+
+    private func deleteLabel(_ label: String) {
+        guard store.removeLabelIfUnused(label) else { return }
+        if viewModel.drawLabel == label {
+            viewModel.drawLabel = store.labels.ordered.first ?? "object"
+        }
     }
 }

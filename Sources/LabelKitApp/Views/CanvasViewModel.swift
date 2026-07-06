@@ -45,16 +45,19 @@ final class CanvasViewModel {
 
     // MARK: - Pointer events (view space in, image space to the FSM)
 
+    /// Hidden boxes are invisible to interaction, not just to rendering.
+    private var visibleBoxes: [BoundingBox] { entry.boxes.filter { !$0.isHidden } }
+
     func pointerDown(at viewPoint: CGPoint, undoManager: UndoManager?) {
         lastDragLocation = viewPoint
         let imagePoint = transform.toImage(viewPoint)
         let hit = CanvasHitTester.hitTest(
             point: imagePoint,
-            boxes: entry.boxes,
+            boxes: visibleBoxes,
             selectedID: selectedBoxID,
             tolerance: 8 / transform.zoom
         )
-        apply(machine.pointerDown(at: imagePoint, hit: hit, spaceHeld: false, boxes: entry.boxes),
+        apply(machine.pointerDown(at: imagePoint, hit: hit, spaceHeld: false, boxes: visibleBoxes),
               undoManager: undoManager)
     }
 
@@ -80,7 +83,7 @@ final class CanvasViewModel {
     func cursor(at viewPoint: CGPoint) -> NSCursor {
         let hit = CanvasHitTester.hitTest(
             point: transform.toImage(viewPoint),
-            boxes: entry.boxes,
+            boxes: visibleBoxes,
             selectedID: selectedBoxID,
             tolerance: 8 / transform.zoom
         )
@@ -118,6 +121,11 @@ final class CanvasViewModel {
         guard let selectedBoxID else { return }
         store.removeBox(id: selectedBoxID, from: entry, undoManager: undoManager)
         self.selectedBoxID = nil
+    }
+
+    func toggleHiddenSelected() {
+        guard let selectedBoxID else { return }
+        store.toggleBoxHidden(id: selectedBoxID, in: entry)
     }
 
     func assignLabel(digit: Int, undoManager: UndoManager?) {

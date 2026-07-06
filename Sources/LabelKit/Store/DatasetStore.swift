@@ -146,8 +146,33 @@ public final class DatasetStore {
         undoManager?.setActionName("Change Label")
     }
 
+    /// Session-only: not persisted, so no dirty flag and no undo step.
+    public func toggleBoxHidden(id: BoundingBox.ID, in entry: ImageEntry) {
+        guard let index = entry.boxes.firstIndex(where: { $0.id == id }) else { return }
+        entry.boxes[index].isHidden.toggle()
+    }
+
     public func addLabel(_ label: String) {
         labels.register(label)
+    }
+
+    public func labelUsage() -> [String: Int] {
+        var usage: [String: Int] = [:]
+        for entry in entries {
+            for box in entry.boxes {
+                usage[box.label, default: 0] += 1
+            }
+        }
+        return usage
+    }
+
+    /// Only unused labels can go — the registry is derived from boxes, so a
+    /// used label would just reappear on next load anyway.
+    @discardableResult
+    public func removeLabelIfUnused(_ label: String) -> Bool {
+        guard labelUsage()[label, default: 0] == 0 else { return false }
+        labels.remove(label)
+        return true
     }
 
     // MARK: - Save

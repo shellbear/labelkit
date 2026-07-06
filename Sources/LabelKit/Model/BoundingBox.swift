@@ -12,6 +12,9 @@ public struct BoundingBox: Identifiable, Equatable, Sendable {
     public var rect: CGRect
     /// Annotation-level unknown keys, carried through save.
     public var extras: [String: JSONValue]
+    /// Editor-session visibility. NOT serialized: hidden boxes still save,
+    /// toggling never dirties the dataset.
+    public var isHidden = false
 
     public init(id: UUID = UUID(), label: String, rect: CGRect, extras: [String: JSONValue] = [:]) {
         self.id = id

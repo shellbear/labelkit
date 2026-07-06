@@ -21,4 +21,8 @@ public struct LabelRegistry: Equatable, Sendable {
     public func index(of label: String) -> Int? {
         ordered.firstIndex(of: label)
     }
+
+    public mutating func remove(_ label: String) {
+        ordered.removeAll { $0 == label }
+    }
 }

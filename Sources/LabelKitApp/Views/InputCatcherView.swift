@@ -8,6 +8,7 @@ enum CanvasKey {
     case delete
     case left, right, up, down
     case digit(Int)
+    case toggleHide
 }
 
 /// The single input funnel for the canvas. An AppKit view because SwiftUI on
@@ -109,6 +110,7 @@ struct InputCatcherView: NSViewRepresentable {
         private static func canvasKey(for event: NSEvent) -> CanvasKey? {
             switch event.keyCode {
             case 51, 117: return .delete       // backspace, forward delete
+            case 4: return .toggleHide          // H
             case 123: return .left
             case 124: return .right
             case 125: return .down

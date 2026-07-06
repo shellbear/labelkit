@@ -115,6 +115,10 @@ struct CanvasView: View {
         case .digit(let digit):
             viewModel.assignLabel(digit: digit, undoManager: undoManager)
             return true
+        case .toggleHide:
+            guard viewModel.selectedBoxID != nil else { return false }
+            viewModel.toggleHiddenSelected()
+            return true
         }
     }
 
@@ -135,7 +139,7 @@ struct CanvasView: View {
     }
 
     private var boxOverlays: some View {
-        ForEach(entry.boxes) { box in
+        ForEach(entry.boxes.filter { !$0.isHidden }) { box in
             BoxOverlayView(
                 box: box,
                 viewRect: viewModel.transform.toView(box.rect),
