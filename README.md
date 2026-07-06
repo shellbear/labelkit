@@ -73,7 +73,18 @@ labelkit <folder> --images '*.jpg'           # filter images by glob
 ## Format
 
 Apple Create ML object detection JSON — one file for the whole dataset,
-coordinates are box **centers** in pixels, top-left origin:
+coordinates are box **centers** in pixels, top-left origin. Official
+references: Apple's [Building an object detector data
+source](https://developer.apple.com/documentation/createml/building-an-object-detector-data-source)
+(Create ML / `MLObjectDetector`) and the [Turi Create object detection
+guide](https://apple.github.io/turicreate/docs/userguide/object_detection/),
+which spells out the center-anchored coordinate semantics.
+
+> Note on key names: Apple's `MLObjectDetector.DataSource` reference shows an
+> `imagefilename`/`annotation` spelling, while the Create ML **app** and the
+> wider ecosystem (Roboflow, RectLabel, …) use `image`/`annotations`.
+> labelkit reads and writes the `image`/`annotations` variant — the one the
+> Create ML framework accepts in practice and the ecosystem interchanges.
 
 ```json
 [
