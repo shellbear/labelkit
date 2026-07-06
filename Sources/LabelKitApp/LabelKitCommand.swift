@@ -45,7 +45,7 @@ struct LabelKitCommand: ParsableCommand {
         }
 
         LaunchContext.current = LaunchContext(location: location, imageGlob: images)
-        LabelKitApp.main() // never returns; the app run loop owns the process
+        MainActor.assumeIsolated { runLabelKitApp() } // never returns
     }
 
     /// labelkit.app next to the binary (build tree or install prefix), or

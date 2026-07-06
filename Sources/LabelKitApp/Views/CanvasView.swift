@@ -51,15 +51,6 @@ struct CanvasView: View {
             LabelPickerView(store: store, entry: entry, viewModel: viewModel)
                 .inspectorColumnWidth(min: 180, ideal: 220)
         }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    showInspector.toggle()
-                } label: {
-                    Label("Labels", systemImage: "tag")
-                }
-            }
-        }
     }
 
     /// Physical pixels the image's largest dimension currently occupies.

@@ -1,3 +1,4 @@
+import AppKit
 import LabelKit
 import SwiftUI
 
@@ -21,8 +22,8 @@ struct RootView: View {
                             systemImage: "photo.on.rectangle.angled")
                     }
                 }
-                .navigationTitle(store.location.displayName)
-                .navigationSubtitle(subtitle(for: store))
+                .onAppear { syncWindowChrome(store) }
+                .onChange(of: store.isDirty) { syncWindowChrome(store) }
             } else {
                 emptyState
             }
@@ -49,9 +50,11 @@ struct RootView: View {
         .frame(minWidth: 480, minHeight: 320)
     }
 
-    private func subtitle(for store: DatasetStore) -> String {
+    private func syncWindowChrome(_ store: DatasetStore) {
+        guard let window = NSApp.windows.first else { return }
         let boxCount = store.entries.reduce(0) { $0 + $1.boxes.count }
-        let dirty = store.isDirty ? " — Edited" : ""
-        return "\(store.entries.count) images · \(boxCount) boxes\(dirty)"
+        window.title = store.location.displayName
+        window.subtitle = "\(store.entries.count) images · \(boxCount) boxes"
+        window.isDocumentEdited = store.isDirty
     }
 }
