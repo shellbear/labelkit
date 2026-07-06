@@ -13,6 +13,9 @@ final class CanvasViewModel {
     var rubberBand: CGRect?
     /// Label applied to newly drawn boxes (last used wins).
     var drawLabel = "object"
+    /// False until the user zooms or pans manually. While false, the canvas
+    /// keeps the image fitted to the viewport across window resizes.
+    private(set) var userAdjustedTransform = false
 
     private var machine = EditorStateMachine()
     private var lastDragLocation: CGPoint?
@@ -30,6 +33,13 @@ final class CanvasViewModel {
     var imageBounds: CGRect { CGRect(origin: .zero, size: imageSize) }
 
     func fit(in viewport: CGSize) {
+        transform = .fit(imageSize: imageSize, in: viewport)
+        userAdjustedTransform = false
+    }
+
+    /// Re-fit on viewport changes until the user takes over explicitly.
+    func viewportChanged(to viewport: CGSize) {
+        guard !userAdjustedTransform, viewport.width > 0, viewport.height > 0 else { return }
         transform = .fit(imageSize: imageSize, in: viewport)
     }
 
@@ -89,6 +99,7 @@ final class CanvasViewModel {
     // MARK: - Scroll / zoom
 
     func scroll(by delta: CGVector, at location: CGPoint, zooming: Bool) {
+        userAdjustedTransform = true
         if zooming {
             transform.zoom(by: 1 + delta.dy / 100, anchor: location)
         } else {
@@ -97,6 +108,7 @@ final class CanvasViewModel {
     }
 
     func magnify(by factor: CGFloat, at location: CGPoint) {
+        userAdjustedTransform = true
         transform.zoom(by: factor, anchor: location)
     }
 
@@ -136,6 +148,7 @@ final class CanvasViewModel {
             case .rubberBand(let rect):
                 rubberBand = rect
             case .panBy(let delta):
+                userAdjustedTransform = true
                 transform.panBy(delta)
             }
         }

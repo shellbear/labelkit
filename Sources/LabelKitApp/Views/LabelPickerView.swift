@@ -50,17 +50,55 @@ struct LabelPickerView: View {
                 }
             }
 
-            if let selectedID = viewModel.selectedBoxID,
-               let box = entry.boxes.first(where: { $0.id == selectedID }) {
-                Section("Selected Box") {
-                    LabeledContent("Label", value: box.label)
-                    LabeledContent("X", value: CreateMLWriter.coordString(box.rect.midX))
-                    LabeledContent("Y", value: CreateMLWriter.coordString(box.rect.midY))
-                    LabeledContent("W", value: CreateMLWriter.coordString(box.rect.width))
-                    LabeledContent("H", value: CreateMLWriter.coordString(box.rect.height))
+            Section("Boxes (\(entry.boxes.count))") {
+                if entry.boxes.isEmpty {
+                    Text(entry.hasEntryInFile
+                         ? "No boxes — negative example"
+                         : "No boxes yet — drag on the image")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(entry.boxes) { box in
+                    boxRow(box)
                 }
             }
         }
+        // ⌫ works here too when the inspector list has focus.
+        .onDeleteCommand {
+            viewModel.deleteSelected(undoManager: undoManager)
+        }
+    }
+
+    @ViewBuilder
+    private func boxRow(_ box: BoundingBox) -> some View {
+        let isSelected = box.id == viewModel.selectedBoxID
+        Button {
+            viewModel.selectedBoxID = box.id
+        } label: {
+            HStack {
+                Circle()
+                    .fill(LabelColors.color(for: box.label, in: store.labels))
+                    .frame(width: 10, height: 10)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(box.label)
+                    Text("\(CreateMLWriter.coordString(box.rect.width))×\(CreateMLWriter.coordString(box.rect.height)) @ \(CreateMLWriter.coordString(box.rect.midX)), \(CreateMLWriter.coordString(box.rect.midY))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    store.removeBox(id: box.id, from: entry, undoManager: undoManager)
+                    if isSelected { viewModel.selectedBoxID = nil }
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .help("Delete box (undo with ⌘Z)")
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(isSelected ? Color.accentColor.opacity(0.18) : nil)
     }
 
     private func select(_ label: String) {

@@ -28,6 +28,9 @@ struct CanvasView: View {
                 .onChange(of: appState.fitTrigger) {
                     viewModel.fit(in: geometry.size)
                 }
+                .onChange(of: geometry.size) { _, size in
+                    viewModel.viewportChanged(to: size)
+                }
                 .onChange(of: viewModel.transform.zoom) { _, zoom in
                     detailLoader.zoomChanged(
                         displayZoom: zoom * displayScale,

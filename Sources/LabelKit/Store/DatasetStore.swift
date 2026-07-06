@@ -19,6 +19,9 @@ public final class DatasetStore {
     /// and appends newly annotated images, keeping git diffs minimal.
     private var savedOrder: [String]
     private var indexByFilename: [String: Int] = [:]
+    /// Indentation unit sniffed from the loaded file (Python's 1-space, tabs,
+    /// …) so saves follow the dataset's own convention — no reformat diffs.
+    private let indentUnit: String
 
     // MARK: - Load
 
@@ -26,10 +29,13 @@ public final class DatasetStore {
         self.location = location
 
         var records: [ImageAnnotationRecord] = []
+        var detectedIndent: String?
         if location.annotationsExists {
             let data = try Data(contentsOf: location.annotationsURL)
             records = try CreateMLFormat.load(data)
+            detectedIndent = JSONIndent.detectUnit(in: data)
         }
+        indentUnit = detectedIndent ?? CreateMLWriter.defaultIndentUnit
         savedOrder = records.map(\.image)
 
         let onDisk = ImageDirectoryScanner.scan(directory: location.imagesDirectory, glob: imageGlob)
@@ -148,7 +154,8 @@ public final class DatasetStore {
 
     public func save() throws {
         let records = recordsForSave()
-        try CreateMLWriter.serialize(records).write(to: location.annotationsURL, options: .atomic)
+        try CreateMLWriter.serialize(records, indentUnit: indentUnit)
+            .write(to: location.annotationsURL, options: .atomic)
         entries.forEach { entry in
             if !entry.boxes.isEmpty { entry.hasEntryInFile = true }
         }

@@ -6,15 +6,24 @@ import Foundation
 ///   annotation: `label`, `coordinates`, extras; coordinates: `x,y,width,height`
 /// - numbers rounded to 2 decimal places, trailing zeros stripped (`450.28`,
 ///   `427.5`, `800`)
-/// - 2-space indent, trailing newline
+/// - indentation follows the loaded file's own unit (see JSONIndent);
+///   defaults to 2 spaces for fresh files
+/// - trailing newline
 public enum CreateMLWriter {
-    public static func serialize(_ records: [ImageAnnotationRecord]) -> Data {
+    public static let defaultIndentUnit = "  "
+
+    public static func serialize(
+        _ records: [ImageAnnotationRecord],
+        indentUnit: String = defaultIndentUnit
+    ) -> Data {
         var out = String()
         out.reserveCapacity(records.count * 256)
+        let pad = { (depth: Int) in String(repeating: indentUnit, count: depth) }
+
         out.append("[")
         for (index, record) in records.enumerated() {
             out.append(index == 0 ? "\n" : ",\n")
-            appendEntry(record, to: &out)
+            appendEntry(record, to: &out, pad: pad)
         }
         out.append(records.isEmpty ? "]\n" : "\n]\n")
         return Data(out.utf8)
@@ -35,39 +44,41 @@ public enum CreateMLWriter {
 
     // MARK: - Entries
 
-    private static func appendEntry(_ record: ImageAnnotationRecord, to out: inout String) {
-        out.append("  {\n")
-        out.append("    \"image\": \(escape(record.image)),\n")
-        out.append("    \"annotations\": [")
+    private static func appendEntry(
+        _ record: ImageAnnotationRecord, to out: inout String, pad: (Int) -> String
+    ) {
+        out.append("\(pad(1)){\n")
+        out.append("\(pad(2))\"image\": \(escape(record.image)),\n")
+        out.append("\(pad(2))\"annotations\": [")
         for (index, box) in record.boxes.enumerated() {
             out.append(index == 0 ? "\n" : ",\n")
-            appendBox(box, to: &out)
+            appendBox(box, to: &out, pad: pad)
         }
-        out.append(record.boxes.isEmpty ? "]" : "\n    ]")
+        out.append(record.boxes.isEmpty ? "]" : "\n\(pad(2))]")
         for (key, value) in record.extras.sorted(by: { $0.key < $1.key }) {
-            out.append(",\n    \(escape(key)): \(encode(value, indent: 4))")
+            out.append(",\n\(pad(2))\(escape(key)): \(encode(value, depth: 2, pad: pad))")
         }
-        out.append("\n  }")
+        out.append("\n\(pad(1))}")
     }
 
-    private static func appendBox(_ box: BoxRecord, to out: inout String) {
-        out.append("      {\n")
-        out.append("        \"label\": \(escape(box.label)),\n")
-        out.append("        \"coordinates\": {\n")
-        out.append("          \"x\": \(coordString(box.x)),\n")
-        out.append("          \"y\": \(coordString(box.y)),\n")
-        out.append("          \"width\": \(coordString(box.width)),\n")
-        out.append("          \"height\": \(coordString(box.height))\n")
-        out.append("        }")
+    private static func appendBox(_ box: BoxRecord, to out: inout String, pad: (Int) -> String) {
+        out.append("\(pad(3)){\n")
+        out.append("\(pad(4))\"label\": \(escape(box.label)),\n")
+        out.append("\(pad(4))\"coordinates\": {\n")
+        out.append("\(pad(5))\"x\": \(coordString(box.x)),\n")
+        out.append("\(pad(5))\"y\": \(coordString(box.y)),\n")
+        out.append("\(pad(5))\"width\": \(coordString(box.width)),\n")
+        out.append("\(pad(5))\"height\": \(coordString(box.height))\n")
+        out.append("\(pad(4))}")
         for (key, value) in box.extras.sorted(by: { $0.key < $1.key }) {
-            out.append(",\n        \(escape(key)): \(encode(value, indent: 8))")
+            out.append(",\n\(pad(4))\(escape(key)): \(encode(value, depth: 4, pad: pad))")
         }
-        out.append("\n      }")
+        out.append("\n\(pad(3))}")
     }
 
     // MARK: - Generic JSON encoding (extras)
 
-    private static func encode(_ value: JSONValue, indent: Int) -> String {
+    private static func encode(_ value: JSONValue, depth: Int, pad: (Int) -> String) -> String {
         switch value {
         case .null: return "null"
         case .bool(let flag): return flag ? "true" : "false"
@@ -75,18 +86,16 @@ public enum CreateMLWriter {
         case .string(let string): return escape(string)
         case .array(let items):
             if items.isEmpty { return "[]" }
-            let pad = String(repeating: " ", count: indent)
             let inner = items
-                .map { "\(pad)  \(encode($0, indent: indent + 2))" }
+                .map { "\(pad(depth + 1))\(encode($0, depth: depth + 1, pad: pad))" }
                 .joined(separator: ",\n")
-            return "[\n\(inner)\n\(pad)]"
+            return "[\n\(inner)\n\(pad(depth))]"
         case .object(let dict):
             if dict.isEmpty { return "{}" }
-            let pad = String(repeating: " ", count: indent)
             let inner = dict.sorted(by: { $0.key < $1.key })
-                .map { "\(pad)  \(escape($0.key)): \(encode($0.value, indent: indent + 2))" }
+                .map { "\(pad(depth + 1))\(escape($0.key)): \(encode($0.value, depth: depth + 1, pad: pad))" }
                 .joined(separator: ",\n")
-            return "{\n\(inner)\n\(pad)}"
+            return "{\n\(inner)\n\(pad(depth))}"
         }
     }
 
