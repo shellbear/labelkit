@@ -1,16 +1,27 @@
 import AppKit
 import SwiftUI
 
+/// Keys the canvas cares about, delivered through the same AppKit funnel as
+/// pointer events (SwiftUI focus on macOS is too unreliable for an editor —
+/// clicking an NSView-backed canvas never focuses a SwiftUI `.focusable()`).
+enum CanvasKey {
+    case delete
+    case left, right, up, down
+    case digit(Int)
+}
+
 /// The single input funnel for the canvas. An AppKit view because SwiftUI on
-/// macOS exposes neither scroll-wheel deltas, pinch magnification, nor
-/// mouse-moved (cursor) events at the fidelity a box editor needs. Top-left
-/// origin (isFlipped) so its coordinates match the SwiftUI overlays 1:1.
+/// macOS exposes neither scroll-wheel deltas, pinch magnification, mouse-moved
+/// (cursor) events, nor dependable key focus at the fidelity a box editor
+/// needs. Top-left origin (isFlipped) so its coordinates match the SwiftUI
+/// overlays 1:1.
 struct InputCatcherView: NSViewRepresentable {
     var onDown: (CGPoint) -> Void
     var onDrag: (CGPoint) -> Void
     var onUp: (CGPoint) -> Void
     var onScroll: (CGVector, CGPoint, Bool) -> Void
     var onMagnify: (CGFloat, CGPoint) -> Void
+    var onKey: (CanvasKey) -> Bool
     var cursorProvider: (CGPoint) -> NSCursor
 
     func makeNSView(context: Context) -> CatcherNSView {
@@ -28,10 +39,16 @@ struct InputCatcherView: NSViewRepresentable {
         private var trackingArea: NSTrackingArea?
 
         override var isFlipped: Bool { true }
-        override var acceptsFirstResponder: Bool { false }
+        override var acceptsFirstResponder: Bool { true }
 
         func configure(with callbacks: InputCatcherView) {
             self.callbacks = callbacks
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // The canvas is the natural key target when a dataset is open.
+            window?.makeFirstResponder(self)
         }
 
         override func updateTrackingAreas() {
@@ -51,6 +68,7 @@ struct InputCatcherView: NSViewRepresentable {
         }
 
         override func mouseDown(with event: NSEvent) {
+            window?.makeFirstResponder(self)
             callbacks?.onDown(location(of: event))
         }
 
@@ -79,6 +97,29 @@ struct InputCatcherView: NSViewRepresentable {
 
         override func magnify(with event: NSEvent) {
             callbacks?.onMagnify(1 + event.magnification, location(of: event))
+        }
+
+        override func keyDown(with event: NSEvent) {
+            if let key = Self.canvasKey(for: event), callbacks?.onKey(key) == true {
+                return
+            }
+            super.keyDown(with: event)
+        }
+
+        private static func canvasKey(for event: NSEvent) -> CanvasKey? {
+            switch event.keyCode {
+            case 51, 117: return .delete       // backspace, forward delete
+            case 123: return .left
+            case 124: return .right
+            case 125: return .down
+            case 126: return .up
+            default:
+                if let character = event.charactersIgnoringModifiers?.first,
+                   let digit = character.wholeNumberValue, (1...9).contains(digit) {
+                    return .digit(digit)
+                }
+                return nil
+            }
         }
     }
 }

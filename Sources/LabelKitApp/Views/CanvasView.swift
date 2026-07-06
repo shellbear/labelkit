@@ -1,9 +1,20 @@
+import AppKit
 import LabelKit
 import SwiftUI
 
+/// Reliable physical-pixel scale. `@Environment(\.displayScale)` reports 1.0
+/// in bare-SPM SwiftUI windows, which halves decode resolution on Retina —
+/// the screen's own backing scale factor is the truth.
+@MainActor
+enum Display {
+    static var scale: CGFloat {
+        NSScreen.main?.backingScaleFactor ?? 2
+    }
+}
+
 /// The editor pane: image + box overlays rendered by SwiftUI in view space
 /// (positions scale with zoom, stroke widths don't — always crisp), all
-/// pointer input funneled through InputCatcherView → EditorStateMachine.
+/// pointer AND keyboard input funneled through InputCatcherView.
 struct CanvasView: View {
     let store: DatasetStore
     let entry: ImageEntry
@@ -13,7 +24,6 @@ struct CanvasView: View {
     @State private var showInspector = true
     @Environment(AppState.self) private var appState
     @Environment(\.undoManager) private var undoManager
-    @Environment(\.displayScale) private var displayScale
 
     init(store: DatasetStore, entry: ImageEntry) {
         self.store = store
@@ -30,32 +40,13 @@ struct CanvasView: View {
                 }
                 .onChange(of: geometry.size) { _, size in
                     viewModel.viewportChanged(to: size)
+                    detailLoader.ensure(displayedPixels)
                 }
-                .onChange(of: viewModel.transform.zoom) { _, zoom in
-                    detailLoader.zoomChanged(
-                        displayZoom: zoom * displayScale,
-                        viewportMaxPixel: max(geometry.size.width, geometry.size.height) * displayScale
-                    )
+                .onChange(of: viewModel.transform.zoom) {
+                    detailLoader.ensure(displayedPixels)
                 }
         }
         .background(.black.opacity(0.9))
-        .focusable()
-        .focusEffectDisabled()
-        .onMoveCommand { direction in
-            switch direction {
-            case .left, .up: appState.selectNeighbor(offset: -1)
-            case .right, .down: appState.selectNeighbor(offset: 1)
-            @unknown default: break
-            }
-        }
-        .onDeleteCommand {
-            viewModel.deleteSelected(undoManager: undoManager)
-        }
-        .onKeyPress(characters: .decimalDigits) { press in
-            guard let digit = press.characters.first?.wholeNumberValue else { return .ignored }
-            viewModel.assignLabel(digit: digit, undoManager: undoManager)
-            return .handled
-        }
         .inspector(isPresented: $showInspector) {
             LabelPickerView(store: store, entry: entry, viewModel: viewModel)
                 .inspectorColumnWidth(min: 180, ideal: 220)
@@ -69,6 +60,12 @@ struct CanvasView: View {
                 }
             }
         }
+    }
+
+    /// Physical pixels the image's largest dimension currently occupies.
+    private var displayedPixels: CGFloat {
+        max(viewModel.imageSize.width, viewModel.imageSize.height)
+            * viewModel.transform.zoom * Display.scale
     }
 
     @ViewBuilder
@@ -95,10 +92,29 @@ struct CanvasView: View {
                     onUp: { viewModel.pointerUp(at: $0, undoManager: undoManager) },
                     onScroll: { viewModel.scroll(by: $0, at: $1, zooming: $2) },
                     onMagnify: { viewModel.magnify(by: $0, at: $1) },
+                    onKey: { handle(key: $0) },
                     cursorProvider: { viewModel.cursor(at: $0) }
                 )
             }
             .clipped()
+        }
+    }
+
+    private func handle(key: CanvasKey) -> Bool {
+        switch key {
+        case .delete:
+            guard viewModel.selectedBoxID != nil else { return false }
+            viewModel.deleteSelected(undoManager: undoManager)
+            return true
+        case .left, .up:
+            appState.selectNeighbor(offset: -1)
+            return true
+        case .right, .down:
+            appState.selectNeighbor(offset: 1)
+            return true
+        case .digit(let digit):
+            viewModel.assignLabel(digit: digit, undoManager: undoManager)
+            return true
         }
     }
 
@@ -137,7 +153,7 @@ struct CanvasView: View {
         detailLoader.display(
             url: store.imageURL(for: entry),
             imageSize: viewModel.imageSize,
-            viewportMaxPixel: max(viewport.width, viewport.height) * displayScale
+            neededMaxPixel: displayedPixels
         )
     }
 }

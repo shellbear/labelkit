@@ -3,41 +3,42 @@ import Foundation
 import Observation
 
 /// Holds exactly ONE decoded image — the currently displayed one — at
-/// display resolution. Zooming past the decoded resolution re-decodes at the
-/// next rung of a ×2 ladder (cancelling any in-flight rung); the lower-res
-/// image keeps displaying meanwhile. Navigation drops the previous image.
+/// display resolution. Callers state how many physical pixels the image
+/// currently occupies (`neededMaxPixel`); the loader re-decodes only when
+/// the decoded bitmap is meaningfully smaller (1.25× hysteresis, so
+/// continuous zoom doesn't thrash), never past native resolution.
 @Observable
 @MainActor
 public final class DetailImageLoader {
     public private(set) var image: CGImage?
-    /// Decoded pixels per image pixel (≤ 1). Views divide by this when the
-    /// decoded bitmap is smaller than the nominal image.
-    public private(set) var decodedScale: CGFloat = 1
 
     private var currentURL: URL?
     private var nominalMaxDimension: CGFloat = 0
+    private var decodedMaxDimension: CGFloat = 0
     private var decodeTask: Task<Void, Never>?
 
     public init() {}
 
-    public func display(url: URL, imageSize: CGSize, viewportMaxPixel: CGFloat) {
+    /// Show `url` (dropping any previous image) at `neededMaxPixel`.
+    public func display(url: URL, imageSize: CGSize, neededMaxPixel: CGFloat) {
         if url != currentURL {
             currentURL = url
             image = nil
+            decodedMaxDimension = 0
             nominalMaxDimension = max(imageSize.width, imageSize.height)
         }
-        decode(maxPixel: min(nominalMaxDimension, viewportMaxPixel))
+        ensure(neededMaxPixel)
     }
 
-    /// Call when zoom changes; re-decodes only when displaying above ~1.25×
-    /// the decoded resolution and there is more resolution to be had.
-    public func zoomChanged(displayZoom: CGFloat, viewportMaxPixel: CGFloat) {
+    /// Re-decode if the displayed physical size outgrew the decoded bitmap.
+    public func ensure(_ neededMaxPixel: CGFloat) {
         guard currentURL != nil, nominalMaxDimension > 0 else { return }
-        let currentDecoded = nominalMaxDimension * decodedScale
-        guard displayZoom * nominalMaxDimension > currentDecoded * 1.25,
-              currentDecoded < nominalMaxDimension else { return }
-        let next = min(nominalMaxDimension, currentDecoded * 2)
-        decode(maxPixel: max(next, viewportMaxPixel))
+        let target = min(nominalMaxDimension, max(neededMaxPixel, 64))
+        if image != nil, decodedMaxDimension >= min(nominalMaxDimension, target / 1.25),
+           decodedMaxDimension >= target * 0.8 || decodedMaxDimension >= nominalMaxDimension {
+            return
+        }
+        decode(maxPixel: target)
     }
 
     private func decode(maxPixel: CGFloat) {
@@ -48,10 +49,11 @@ public final class DetailImageLoader {
                 ImageDownsampler.decode(url: url, maxPixel: maxPixel)
             }.value
             guard !Task.isCancelled, let self, url == self.currentURL, let decoded else { return }
+            // Never replace a sharper image with a blurrier one (stale task).
+            let dimension = CGFloat(max(decoded.width, decoded.height))
+            guard dimension > self.decodedMaxDimension || self.image == nil else { return }
             self.image = decoded
-            self.decodedScale = self.nominalMaxDimension > 0
-                ? min(1, CGFloat(max(decoded.width, decoded.height)) / self.nominalMaxDimension)
-                : 1
+            self.decodedMaxDimension = dimension
         }
     }
 }

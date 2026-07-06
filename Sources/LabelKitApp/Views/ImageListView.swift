@@ -21,7 +21,6 @@ struct ImageRowView: View {
     let imageURL: URL
 
     @State private var thumbnail: CGImage?
-    @Environment(\.displayScale) private var displayScale
 
     private static let thumbnailPoints: CGFloat = 40
 
@@ -61,14 +60,14 @@ struct ImageRowView: View {
         .task(id: entry.filename) {
             guard thumbnail == nil, !entry.imageFileMissing else { return }
             thumbnail = await ThumbnailProvider.shared.thumbnail(
-                for: imageURL, maxPixel: Self.thumbnailPoints * displayScale)
+                for: imageURL, maxPixel: Self.thumbnailPoints * Display.scale)
         }
     }
 
     @ViewBuilder
     private var thumbnailView: some View {
         if let thumbnail {
-            Image(decorative: thumbnail, scale: displayScale)
+            Image(decorative: thumbnail, scale: Display.scale)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
         } else {
