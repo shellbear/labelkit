@@ -54,9 +54,14 @@ struct LabelKitCommand: ParsableCommand {
         if let override = ProcessInfo.processInfo.environment["LABELKIT_APP"] {
             return FileManager.default.fileExists(atPath: override) ? override : nil
         }
-        let binary = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-        let candidate = binary.deletingLastPathComponent()
-            .appendingPathComponent("labelkit.app").path
-        return FileManager.default.fileExists(atPath: candidate) ? candidate : nil
+        let binaryDirectory = URL(fileURLWithPath: CommandLine.arguments[0])
+            .resolvingSymlinksInPath().deletingLastPathComponent()
+        let candidates = [
+            binaryDirectory.appendingPathComponent("labelkit.app").path,
+            // Homebrew Cellar layout: <prefix>/bin/labelkit + <prefix>/labelkit.app
+            binaryDirectory.deletingLastPathComponent()
+                .appendingPathComponent("labelkit.app").path,
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
     }
 }

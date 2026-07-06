@@ -5,7 +5,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift build -c release
+# --universal builds an arm64+x86_64 fat binary (used by the release CI).
+if [[ "${1:-}" == "--universal" ]]; then
+    swift build -c release --arch arm64 --arch x86_64
+    BIN=.build/apple/Products/Release/labelkit
+    mkdir -p .build/release
+    cp "$BIN" .build/release/labelkit   # canonical output location either way
+else
+    swift build -c release
+fi
 BIN=.build/release/labelkit
 APP=.build/release/labelkit.app
 VERSION=$(grep -o '"[0-9.]*"' Sources/LabelKit/Version.swift | tr -d '"')
