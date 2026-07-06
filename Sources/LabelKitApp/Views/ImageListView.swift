@@ -9,10 +9,21 @@ struct ImageListView: View {
     @Binding var selection: String?
 
     var body: some View {
-        List(store.entries, selection: $selection) { entry in
-            ImageRowView(entry: entry, imageURL: store.imageURL(for: entry))
+        ScrollViewReader { proxy in
+            List(store.entries, selection: $selection) { entry in
+                ImageRowView(entry: entry, imageURL: store.imageURL(for: entry))
+                    .id(entry.filename)
+            }
+            .listStyle(.sidebar)
+            // Keyboard navigation (←/→ on the canvas) must keep the selected
+            // row visible — scroll minimally when it leaves the viewport.
+            .onChange(of: selection) { _, selected in
+                guard let selected else { return }
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo(selected)
+                }
+            }
         }
-        .listStyle(.sidebar)
     }
 }
 
