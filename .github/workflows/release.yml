@@ -21,16 +21,26 @@ jobs:
       - run: swift test
       - name: Build universal binary + app bundle
         run: ./scripts/package-app.sh --universal
-      - name: Archive
+      - name: Archive (universal + thin per-arch)
         run: |
           cd .build/release
-          tar -czf "labelkit-${GITHUB_REF_NAME}-macos.tar.gz" labelkit labelkit.app
-          shasum -a 256 labelkit-*-macos.tar.gz | tee checksums.txt
+          # Universal: the fallback + manual-download artifact.
+          tar -czf "labelkit-${GITHUB_REF_NAME}-universal.tar.gz" labelkit labelkit.app
+          # Thin slices: half the size; brew serves these via on_arm/on_intel.
+          for arch in arm64 x86_64; do
+            mkdir -p "thin-$arch"
+            lipo labelkit -thin "$arch" -output "thin-$arch/labelkit"
+            cp -R labelkit.app "thin-$arch/labelkit.app"
+            lipo labelkit -thin "$arch" -output "thin-$arch/labelkit.app/Contents/MacOS/labelkit"
+            codesign --force --sign - "thin-$arch/labelkit.app"
+            tar -czf "labelkit-${GITHUB_REF_NAME}-${arch}.tar.gz" -C "thin-$arch" labelkit labelkit.app
+          done
+          shasum -a 256 labelkit-*.tar.gz | tee checksums.txt
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            ".build/release/labelkit-${GITHUB_REF_NAME}-macos.tar.gz" \
+            .build/release/labelkit-*.tar.gz \
             .build/release/checksums.txt \
             --generate-notes
