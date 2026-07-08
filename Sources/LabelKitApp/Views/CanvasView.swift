@@ -45,6 +45,7 @@ struct CanvasView: View {
                 .onChange(of: viewModel.transform.zoom) {
                     detailLoader.ensure(displayedPixels)
                 }
+                .onDisappear { detailLoader.cancel() }
         }
         .background(.black.opacity(0.9))
         .inspector(isPresented: $showInspector) {

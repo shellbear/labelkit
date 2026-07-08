@@ -19,6 +19,10 @@ public final class DatasetStore {
     /// and appends newly annotated images, keeping git diffs minimal.
     private var savedOrder: [String]
     private var indexByFilename: [String: Int] = [:]
+    /// Memoized label→count over all boxes. Rebuilt lazily; invalidated only
+    /// when box membership or a box label changes (NOT on geometry edits), so
+    /// the inspector's per-render `labelUsage()` stays O(1) even mid-drag.
+    private var cachedLabelUsage: [String: Int]?
     /// Indentation unit sniffed from the loaded file (Python's 1-space, tabs,
     /// …) so saves follow the dataset's own convention — no reformat diffs.
     private let indentUnit: String
@@ -78,6 +82,11 @@ public final class DatasetStore {
         indexByFilename[filename].map { entries[$0] }
     }
 
+    /// Position of `filename` in `entries`, for O(1) neighbor navigation.
+    public func index(of filename: String) -> Int? {
+        indexByFilename[filename]
+    }
+
     public func imageURL(for entry: ImageEntry) -> URL {
         location.imagesDirectory.appendingPathComponent(entry.filename)
     }
@@ -87,6 +96,7 @@ public final class DatasetStore {
     public func addBox(_ box: BoundingBox, to entry: ImageEntry, undoManager: UndoManager?) {
         entry.boxes.append(box)
         labels.register(box.label)
+        cachedLabelUsage = nil
         markDirty()
         undoManager?.registerUndo(withTarget: self) { store in
             store.removeBox(id: box.id, from: entry, undoManager: undoManager)
@@ -97,6 +107,7 @@ public final class DatasetStore {
     public func removeBox(id: BoundingBox.ID, from entry: ImageEntry, undoManager: UndoManager?) {
         guard let index = entry.boxes.firstIndex(where: { $0.id == id }) else { return }
         let removed = entry.boxes.remove(at: index)
+        cachedLabelUsage = nil
         markDirty()
         undoManager?.registerUndo(withTarget: self) { store in
             store.insertBox(removed, at: index, in: entry, undoManager: undoManager)
@@ -106,6 +117,7 @@ public final class DatasetStore {
 
     private func insertBox(_ box: BoundingBox, at index: Int, in entry: ImageEntry, undoManager: UndoManager?) {
         entry.boxes.insert(box, at: min(index, entry.boxes.count))
+        cachedLabelUsage = nil
         markDirty()
         undoManager?.registerUndo(withTarget: self) { store in
             store.removeBox(id: box.id, from: entry, undoManager: undoManager)
@@ -139,6 +151,7 @@ public final class DatasetStore {
         guard previous != label else { return }
         entry.boxes[index].label = label
         labels.register(label)
+        cachedLabelUsage = nil
         markDirty()
         undoManager?.registerUndo(withTarget: self) { store in
             store.setBoxLabel(id: id, in: entry, to: previous, undoManager: undoManager)
@@ -157,12 +170,14 @@ public final class DatasetStore {
     }
 
     public func labelUsage() -> [String: Int] {
+        if let cachedLabelUsage { return cachedLabelUsage }
         var usage: [String: Int] = [:]
         for entry in entries {
             for box in entry.boxes {
                 usage[box.label, default: 0] += 1
             }
         }
+        cachedLabelUsage = usage
         return usage
     }
 

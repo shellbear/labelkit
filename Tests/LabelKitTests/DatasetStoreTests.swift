@@ -113,6 +113,31 @@ final class DatasetStoreTests: XCTestCase {
         XCTAssertEqual(records.map(\.image), ["x.jpg"])
     }
 
+    // MARK: - Label usage (memoized; invalidated on box/label change only)
+
+    func testLabelUsageStaysCorrectAcrossMutations() throws {
+        let store = try makeStore()
+        // b.jpg + ghost.jpg each carry one "card" box.
+        XCTAssertEqual(store.labelUsage(), ["card": 2])
+
+        let a = try XCTUnwrap(store.entry(for: "a.jpg"))
+        store.addBox(BoundingBox(label: "star", rect: CGRect(x: 1, y: 1, width: 2, height: 2)),
+                     to: a, undoManager: nil)
+        // Would read a stale ["card": 2] if addBox didn't invalidate the memo.
+        XCTAssertEqual(store.labelUsage(), ["card": 2, "star": 1])
+
+        let b = try XCTUnwrap(store.entry(for: "b.jpg"))
+        store.setBoxLabel(id: b.boxes[0].id, in: b, to: "star", undoManager: nil)
+        XCTAssertEqual(store.labelUsage(), ["card": 1, "star": 2])
+
+        // Geometry-only edits (the per-frame drag path) must not disturb counts.
+        store.setBoxRect(id: b.boxes[0].id, in: b, to: CGRect(x: 9, y: 9, width: 3, height: 3))
+        XCTAssertEqual(store.labelUsage(), ["card": 1, "star": 2])
+
+        store.removeBox(id: b.boxes[0].id, from: b, undoManager: nil)
+        XCTAssertEqual(store.labelUsage(), ["card": 1, "star": 1])
+    }
+
     // MARK: - Undo
 
     func testUndoRedoSequencesRestoreState() throws {

@@ -31,9 +31,8 @@ public actor ThumbnailProvider {
 
     public func thumbnail(for url: URL, maxPixel: CGFloat) async -> CGImage? {
         if let cached = cache.object(forKey: url as NSURL) { return cached.image }
-        if let running = inFlight[url] { return await running.value }
 
-        let task = Task<CGImage?, Never> { [self] in
+        let task = inFlight[url] ?? Task<CGImage?, Never> { [self] in
             await acquireSlot()
             defer { releaseSlot() }
             guard !Task.isCancelled else { return nil }
@@ -46,7 +45,16 @@ public actor ThumbnailProvider {
             return image
         }
         inFlight[url] = task
-        let image = await task.value
+
+        // The old code awaited an unstructured task, so a row scrolling away
+        // (SwiftUI `.task(id:)` cancellation) never reached the decode — only
+        // the 4-slot semaphore throttled a fling. Forward cancellation to the
+        // task so a still-queued decode is dropped before it starts.
+        let image = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         inFlight[url] = nil
         return image
     }

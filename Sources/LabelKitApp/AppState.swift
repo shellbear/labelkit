@@ -48,7 +48,7 @@ final class AppState {
 
     func selectNeighbor(offset: Int) {
         guard let store, !store.entries.isEmpty else { return }
-        let index = store.entries.firstIndex { $0.filename == selectedFilename } ?? 0
+        let index = selectedFilename.flatMap { store.index(of: $0) } ?? 0
         let next = min(max(index + offset, 0), store.entries.count - 1)
         selectedFilename = store.entries[next].filename
     }
