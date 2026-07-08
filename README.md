@@ -44,9 +44,12 @@ source (macOS 14+, Xcode 15+):
 
 ```bash
 git clone https://github.com/shellbear/labelkit && cd labelkit
-./scripts/package-app.sh
-cp .build/release/labelkit /opt/homebrew/bin/ && cp -R .build/release/labelkit.app /opt/homebrew/bin/
+make install    # builds and installs into your Homebrew prefix (or /usr/local)
 ```
+
+`make install PREFIX=~/.local` installs elsewhere; `make app` just builds —
+the CLI and `labelkit.app` land in `.build/release/`, side by side (the CLI
+launches through the sibling bundle, so keep them together).
 
 ## Usage
 
