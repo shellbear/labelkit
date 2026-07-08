@@ -1,4 +1,5 @@
 import AppKit
+import LabelKit
 import SwiftUI
 
 /// Classic AppKit shell hosting SwiftUI content. SwiftUI's WindowGroup never
@@ -19,10 +20,11 @@ func runLabelKitApp() -> Never {
 @MainActor private var appControllerStrongRef: AppController?
 
 @MainActor
-final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     private var appState: AppState!
     private let windowUndoManager = UndoManager()
     private var window: NSWindow!
+    private var openRecentMenu: NSMenu!
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -33,12 +35,25 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         buildMenu()
         buildWindow()
 
+        // Later launches of the CLI/app hand their dataset to this instance.
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(handleOpenRequest(_:)),
+            name: SingleInstance.openRequestNotification, object: nil)
+
         // Visible immediately, active or not.
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         for delay in [0.0, 0.2] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { Self.tryActivate() }
         }
+    }
+
+    @objc private func handleOpenRequest(_ note: Notification) {
+        // Surface the window before any unsaved-changes prompt.
+        window.makeKeyAndOrderFront(nil)
+        Self.tryActivate()
+        guard let request = SingleInstance.decodeOpenRequest(note) else { return }
+        appState.requestOpenFromCLI(request.location, imageGlob: request.imageGlob)
     }
 
     private static func tryActivate() {
@@ -114,6 +129,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         mainMenu.addItem(fileMenuItem)
         let fileMenu = NSMenu(title: "File")
         fileMenu.addItem(menuItem("Open Dataset…", "o", #selector(openDataset)))
+        let openRecentItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        openRecentMenu = NSMenu(title: "Open Recent")
+        openRecentMenu.delegate = self  // rebuilt on every open via menuNeedsUpdate
+        openRecentMenu.autoenablesItems = false
+        openRecentItem.submenu = openRecentMenu
+        fileMenu.addItem(openRecentItem)
+        fileMenu.addItem(.separator())
         fileMenu.addItem(menuItem("Save", "s", #selector(saveDataset)))
         fileMenuItem.submenu = fileMenu
 
@@ -147,6 +169,35 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item.target = self
         return item
     }
+
+    // MARK: - Open Recent
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === openRecentMenu else { return }
+        menu.removeAllItems()
+        let recents = appState.recentLocations
+        for location in recents {
+            let item = menuItem(location.displayName, "", #selector(openRecent(_:)))
+            item.representedObject = location
+            // Same-named folders are common in datasets; the tooltip disambiguates.
+            item.toolTip = location.annotationsURL.path
+            let icon = NSWorkspace.shared.icon(forFile: location.imagesDirectory.path)
+            icon.size = NSSize(width: 16, height: 16)
+            item.image = icon
+            menu.addItem(item)
+        }
+        if !recents.isEmpty { menu.addItem(.separator()) }
+        let clear = menuItem("Clear Menu", "", #selector(clearRecents))
+        clear.isEnabled = !recents.isEmpty
+        menu.addItem(clear)
+    }
+
+    @objc private func openRecent(_ sender: NSMenuItem) {
+        guard let location = sender.representedObject as? DatasetLocation else { return }
+        appState.requestOpen(location)
+    }
+
+    @objc private func clearRecents() { appState.clearRecents() }
 
     @objc private func openDataset() { appState.presentOpenPanel() }
     @objc private func saveDataset() { appState.save() }

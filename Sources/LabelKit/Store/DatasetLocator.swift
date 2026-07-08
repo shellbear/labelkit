@@ -1,7 +1,7 @@
 import Foundation
 
 /// Where a dataset lives: the images directory + its annotations file.
-public struct DatasetLocation: Equatable, Sendable {
+public struct DatasetLocation: Hashable, Sendable {
     public let imagesDirectory: URL
     public let annotationsURL: URL
     /// False when starting fresh — the file is created on first save.

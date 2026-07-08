@@ -39,15 +39,66 @@ struct RootView: View {
     }
 
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label("labelkit", systemImage: "rectangle.dashed.badge.record")
-        } description: {
-            Text("Open a folder of images, or a Create ML annotations.json file.")
-        } actions: {
-            Button("Open Dataset…") { appState.presentOpenPanel() }
-                .keyboardShortcut("o")
+        VStack(spacing: 0) {
+            ContentUnavailableView {
+                Label("labelkit", systemImage: "rectangle.dashed.badge.record")
+            } description: {
+                Text("Open a folder of images, or a Create ML annotations.json file.")
+            } actions: {
+                Button("Open Dataset…") { appState.presentOpenPanel() }
+                    .keyboardShortcut("o")
+            }
+            if !appState.recentLocations.isEmpty {
+                recentsList
+                    .padding(.bottom, 28)
+            }
         }
         .frame(minWidth: 480, minHeight: 320)
+    }
+
+    private var recentsList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Recent")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 10)
+            ForEach(appState.recentLocations, id: \.self) { location in
+                RecentProjectRow(location: location) { appState.requestOpen(location) }
+            }
+        }
+        .frame(width: 380)
+    }
+
+    private struct RecentProjectRow: View {
+        let location: DatasetLocation
+        let action: () -> Void
+        @State private var hovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 8) {
+                    Image(systemName: "folder.fill")
+                        .foregroundStyle(.tint)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(location.displayName)
+                        Text((location.imagesDirectory.path as NSString).abbreviatingWithTildeInPath)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 5)
+                .padding(.horizontal, 10)
+                .background(
+                    hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
+                    in: RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+        }
     }
 
     private func syncWindowChrome(_ store: DatasetStore) {

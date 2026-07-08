@@ -11,11 +11,16 @@ final class AppState {
     /// Incremented to ask the canvas to reset to fit-to-window (⌘0).
     var fitTrigger = 0
     var loadError: String?
+    /// Newest first, capped — drives File ▸ Open Recent and the welcome list.
+    private(set) var recentLocations: [DatasetLocation]
 
-    private let imageGlob: String?
+    private var imageGlob: String?
+    private let recentProjects: RecentProjects
 
-    init(launch: LaunchContext) {
+    init(launch: LaunchContext, defaults: UserDefaults = labelkitDefaults()) {
         imageGlob = launch.imageGlob
+        recentProjects = RecentProjects(defaults: defaults)
+        recentLocations = recentProjects.locations
         if let location = launch.location {
             open(location: location)
         }
@@ -27,6 +32,8 @@ final class AppState {
             store = opened
             selectedFilename = opened.entries.first?.filename
             loadError = nil
+            recentProjects.record(opened.location)
+            recentLocations = recentProjects.locations
         } catch {
             loadError = error.localizedDescription
         }
@@ -47,6 +54,31 @@ final class AppState {
     }
 
     // MARK: - Open / switch flows
+
+    /// User-initiated switch (Open Recent, welcome list). Selecting the
+    /// project that is already open is a no-op; a dirty store prompts first.
+    func requestOpen(_ location: DatasetLocation) {
+        if let current = store?.location,
+           current.imagesDirectory == location.imagesDirectory,
+           current.annotationsURL == location.annotationsURL {
+            return
+        }
+        guard confirmDiscardIfDirty() else { return }
+        open(location: location)
+    }
+
+    /// A CLI invocation forwarded from another process — adopts that
+    /// invocation's glob (nil = unfiltered), matching fresh-launch semantics.
+    func requestOpenFromCLI(_ location: DatasetLocation, imageGlob newGlob: String?) {
+        guard confirmDiscardIfDirty() else { return }
+        imageGlob = newGlob
+        open(location: location)
+    }
+
+    func clearRecents() {
+        recentProjects.clear()
+        recentLocations = []
+    }
 
     func presentOpenPanel() {
         guard confirmDiscardIfDirty() else { return }

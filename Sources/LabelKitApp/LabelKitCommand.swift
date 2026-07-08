@@ -23,13 +23,26 @@ struct LabelKitCommand: ParsableCommand {
         // paths never touch AppKit (clean stderr + exit codes for CLI use).
         let location = try DatasetLocator.resolve(path: path, annotationsOverride: annotations)
 
+        // Single instance, like Preview: hand the dataset to an already
+        // running copy and bring it forward instead of spawning a second one.
+        // (ArgumentParser invokes run() on the main thread.)
+        let handedOff = MainActor.assumeIsolated { () -> Bool in
+            guard let running = SingleInstance.runningInstance() else { return false }
+            if let location {
+                SingleInstance.postOpenRequest(location: location, imageGlob: images)
+            }
+            SingleInstance.activate(running)
+            return true
+        }
+        if handedOff { return }
+
         // macOS 14+ denies terminal-spawned processes self-activation, and
         // SwiftUI won't even create the window of an inactive app. Relaunch
         // through LaunchServices via the sibling .app bundle when running as
         // a bare binary — LS-launched apps activate and focus normally.
         if Bundle.main.bundlePath.hasSuffix(".app") == false,
            let bundle = Self.siblingAppBundle() {
-            var arguments = ["-na", bundle, "--args"]
+            var arguments = ["-a", bundle, "--args"]
             if let location {
                 arguments.append(location.imagesDirectory.path)
                 arguments.append(contentsOf: ["--annotations", location.annotationsURL.path])
