@@ -13,29 +13,37 @@ import SwiftUI
 struct ImageListView: View {
     let store: DatasetStore
     @Environment(AppState.self) private var appState
+    @Environment(GenerationController.self) private var generation
 
     var body: some View {
         // Reading `selectedFilename` here (cheap now — no List) re-runs this
         // body on navigation and passes the new value into the representable,
         // whose updateNSView just selects + scrolls the row. Reading
         // `entriesRevision` likewise re-runs it after an import so the table
-        // reloads its new rows.
+        // reloads its new rows. Reading `appliedRevision` re-runs it as
+        // generation lands boxes, so on-screen badges refresh live.
         SidebarTable(
             store: store,
-            selected: appState.selectedFilename,
+            selected: appState.selectedFilenames,
+            primary: appState.selectedFilename,
             revision: store.entriesRevision,
-            onSelect: { appState.selectedFilename = $0 }
+            badgeTick: generation.appliedRevision,
+            onSelectionChange: { appState.setSidebarSelection($0, clicked: $1) }
         )
     }
 }
 
 private struct SidebarTable: NSViewRepresentable {
     let store: DatasetStore
-    let selected: String?
+    let selected: Set<String>
+    let primary: String?
     let revision: Int
-    let onSelect: (String) -> Void
+    let badgeTick: Int
+    let onSelectionChange: (Set<String>, String?) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(store: store, onSelect: onSelect) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(store: store, onSelectionChange: onSelectionChange)
+    }
 
     func makeNSView(context: Context) -> NSScrollView {
         let table = NSTableView()
@@ -44,8 +52,9 @@ private struct SidebarTable: NSViewRepresentable {
         table.rowHeight = 48
         table.backgroundColor = .clear
         table.selectionHighlightStyle = .regular
-        table.allowsEmptySelection = false
-        table.allowsMultipleSelection = false
+        // Finder-style: ⇧-click ranges, ⌘-click toggles individuals, ⌘A all.
+        table.allowsEmptySelection = true
+        table.allowsMultipleSelection = true
         let column = NSTableColumn(identifier: .init("image"))
         column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
@@ -63,28 +72,31 @@ private struct SidebarTable: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        context.coordinator.update(store: store, revision: revision, onSelect: onSelect)
-        context.coordinator.syncSelection(to: selected)
+        context.coordinator.update(store: store, revision: revision, onSelectionChange: onSelectionChange)
+        context.coordinator.syncSelection(to: selected, primary: primary)
+        context.coordinator.refreshBadges(tick: badgeTick)
     }
 
     @MainActor
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         private var store: DatasetStore
-        private var onSelect: (String) -> Void
+        private var onSelectionChange: (Set<String>, String?) -> Void
         weak var table: NSTableView?
         private var storeID: ObjectIdentifier
         private var revision: Int
+        private var badgeTick = 0
         private var programmatic = false
 
-        init(store: DatasetStore, onSelect: @escaping (String) -> Void) {
+        init(store: DatasetStore, onSelectionChange: @escaping (Set<String>, String?) -> Void) {
             self.store = store
-            self.onSelect = onSelect
+            self.onSelectionChange = onSelectionChange
             self.storeID = ObjectIdentifier(store)
             self.revision = store.entriesRevision
         }
 
-        func update(store: DatasetStore, revision: Int, onSelect: @escaping (String) -> Void) {
-            self.onSelect = onSelect
+        func update(store: DatasetStore, revision: Int,
+                    onSelectionChange: @escaping (Set<String>, String?) -> Void) {
+            self.onSelectionChange = onSelectionChange
             let id = ObjectIdentifier(store)
             if id != storeID {  // dataset switched → rebuild rows
                 self.store = store
@@ -109,19 +121,44 @@ private struct SidebarTable: NSViewRepresentable {
         }
 
         func tableViewSelectionDidChange(_ notification: Notification) {
-            guard !programmatic, let table, table.selectedRow >= 0,
-                  table.selectedRow < store.entries.count else { return }
-            onSelect(store.entries[table.selectedRow].filename)
+            guard !programmatic, let table else { return }
+            let names = Set(table.selectedRowIndexes.compactMap {
+                $0 < store.entries.count ? store.entries[$0].filename : nil
+            })
+            let clicked = (table.clickedRow >= 0 && table.clickedRow < store.entries.count)
+                ? store.entries[table.clickedRow].filename : nil
+            onSelectionChange(names, clicked)
         }
 
-        /// Reflect an external selection (arrow keys on the canvas) — O(1).
-        func syncSelection(to filename: String?) {
-            guard let table, let filename, let index = store.index(of: filename) else { return }
-            guard table.selectedRow != index else { return }
-            programmatic = true
-            table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-            table.scrollRowToVisible(index)
-            programmatic = false
+        /// Refresh only the box-count badges of on-screen rows when generation
+        /// lands new boxes. Updates the badge label in place (no `reloadData`)
+        /// so thumbnails never re-decode or flicker; off-screen rows pick up
+        /// their new count when scrolled in and reconfigured.
+        func refreshBadges(tick: Int) {
+            guard tick != badgeTick else { return }
+            badgeTick = tick
+            guard let table else { return }
+            let visible = table.rows(in: table.visibleRect)
+            guard visible.length > 0 else { return }
+            for row in visible.location..<(visible.location + visible.length) where row < store.entries.count {
+                let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? ImageCellView
+                cell?.updateBadge(entry: store.entries[row])
+            }
+        }
+
+        /// Reflect an external selection (arrow keys, ⌘A fallback, import) —
+        /// select exactly `names` and keep `primary` visible.
+        func syncSelection(to names: Set<String>, primary: String?) {
+            guard let table else { return }
+            let target = IndexSet(names.compactMap { store.index(of: $0) })
+            if table.selectedRowIndexes != target {
+                programmatic = true
+                table.selectRowIndexes(target, byExtendingSelection: false)
+                programmatic = false
+            }
+            if let primary, let index = store.index(of: primary) {
+                table.scrollRowToVisible(index)
+            }
         }
     }
 }
@@ -173,6 +210,13 @@ private final class ImageCellView: NSTableCellView {
             guard let self, self.filename == name, let image else { return }
             self.thumb.cgImage = image
         }
+    }
+
+    /// Refresh just the box-count badge (live generation), leaving the
+    /// thumbnail and its in-flight load untouched.
+    func updateBadge(entry: ImageEntry) {
+        guard entry.filename == filename else { return }
+        badge.set(entry: entry)
     }
 
     override func prepareForReuse() {

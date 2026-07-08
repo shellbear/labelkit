@@ -7,7 +7,12 @@ import SwiftUI
 @MainActor
 final class AppState {
     var store: DatasetStore?
+    /// The canvas image — the primary/anchor of the sidebar selection.
     var selectedFilename: String?
+    /// Multi-selection for batch actions (⌘A select all, ⌘/⇧-click). Always
+    /// contains `selectedFilename` when non-empty; a lone selection is just a
+    /// one-element set. Drives "Generate on Selected".
+    var selectedFilenames: Set<String> = []
     /// Incremented to ask the canvas to reset to fit-to-window (⌘0).
     var fitTrigger = 0
     var loadError: String?
@@ -48,7 +53,7 @@ final class AppState {
         do {
             let opened = try DatasetStore(location: location, imageGlob: imageGlob)
             store = opened
-            selectedFilename = opened.entries.first?.filename
+            selectSingle(opened.entries.first?.filename)
             loadError = nil
             recentProjects.record(opened.location)
             recentLocations = recentProjects.locations
@@ -62,6 +67,38 @@ final class AppState {
         return store?.entry(for: selectedFilename)
     }
 
+    // MARK: - Selection
+
+    /// Collapse to a single selected image (arrow-key nav, programmatic focus,
+    /// import). Keeps `selectedFilename` and `selectedFilenames` in lockstep.
+    func selectSingle(_ filename: String?) {
+        selectedFilename = filename
+        selectedFilenames = filename.map { [$0] } ?? []
+    }
+
+    /// Apply a sidebar selection change. `clicked` is the row the user just
+    /// acted on (nil for Select All); it becomes the canvas image when it's
+    /// part of the new selection. Otherwise the canvas stays put if its image
+    /// is still selected, else moves to the first selected in list order.
+    func setSidebarSelection(_ names: Set<String>, clicked: String?) {
+        selectedFilenames = names
+        if names.isEmpty {
+            selectedFilename = nil
+        } else if let clicked, names.contains(clicked) {
+            selectedFilename = clicked
+        } else if let current = selectedFilename, names.contains(current) {
+            // keep the canvas where it is (e.g. Select All, or deselecting elsewhere)
+        } else {
+            selectedFilename = store?.entries.first { names.contains($0.filename) }?.filename
+        }
+    }
+
+    /// ⌘A — select every image (fallback when the sidebar isn't first responder).
+    func selectAllImages() {
+        guard let store else { return }
+        setSidebarSelection(Set(store.entries.map(\.filename)), clicked: nil)
+    }
+
     // MARK: - Navigation
 
     func selectNeighbor(offset: Int) {
@@ -73,7 +110,7 @@ final class AppState {
         prefetchTasks = []
         let index = selectedFilename.flatMap { store.index(of: $0) } ?? 0
         let next = min(max(index + offset, 0), store.entries.count - 1)
-        selectedFilename = store.entries[next].filename
+        selectSingle(store.entries[next].filename)
         // Prefetch ahead only when stepping deliberately: during a fast scrub
         // the decode is debounced and the CPU is reserved for cheap thumbnails.
         if !lastStepWasRapid {
@@ -182,7 +219,7 @@ final class AppState {
                 return try ImageImporter.execute(plan, into: directory)
             }.value
             store.registerImported(names)
-            if let last = names.last { selectedFilename = last }
+            if let last = names.last { selectSingle(last) }
         } catch {
             presentError("Could not import images", error)
         }

@@ -156,6 +156,37 @@ public final class DatasetStore {
         undoManager?.setActionName("Delete Box")
     }
 
+    /// Append many boxes at once as a single undo step — the apply path for
+    /// model generation. Additive: existing boxes are untouched. Wrap a
+    /// multi-image run in one `beginUndoGrouping`/`endUndoGrouping` on the
+    /// caller's side and every entry's add coalesces into one ⌘Z.
+    public func addBoxes(_ boxes: [BoundingBox], to entry: ImageEntry, undoManager: UndoManager?) {
+        guard !boxes.isEmpty else { return }
+        entry.boxes.append(contentsOf: boxes)
+        boxes.forEach { labels.register($0.label) }
+        cachedLabelUsage = nil
+        markDirty()
+        let ids = Set(boxes.map(\.id))
+        undoManager?.registerUndo(withTarget: self) { store in
+            store.removeBoxes(ids: ids, from: entry, undoManager: undoManager)
+        }
+        undoManager?.setActionName("Generate Boxes")
+    }
+
+    /// Undo/redo inverse of `addBoxes`: removes exactly the boxes it added
+    /// (by id) and re-adds them with the same ids on redo.
+    private func removeBoxes(ids: Set<BoundingBox.ID>, from entry: ImageEntry, undoManager: UndoManager?) {
+        let removed = entry.boxes.filter { ids.contains($0.id) }
+        guard !removed.isEmpty else { return }
+        entry.boxes.removeAll { ids.contains($0.id) }
+        cachedLabelUsage = nil
+        markDirty()
+        undoManager?.registerUndo(withTarget: self) { store in
+            store.addBoxes(removed, to: entry, undoManager: undoManager)
+        }
+        undoManager?.setActionName("Generate Boxes")
+    }
+
     private func insertBox(_ box: BoundingBox, at index: Int, in entry: ImageEntry, undoManager: UndoManager?) {
         entry.boxes.insert(box, at: min(index, entry.boxes.count))
         cachedLabelUsage = nil

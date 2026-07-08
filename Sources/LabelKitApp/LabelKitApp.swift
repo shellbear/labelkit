@@ -20,11 +20,14 @@ func runLabelKitApp() -> Never {
 @MainActor private var appControllerStrongRef: AppController?
 
 @MainActor
-final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
+final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate,
+                           NSToolbarDelegate {
     private var appState: AppState!
+    private var generationController: GenerationController!
     private let windowUndoManager = UndoManager()
     private var window: NSWindow!
     private var openRecentMenu: NSMenu!
+    private var modelMenu: NSMenu!
     /// Icon/"Open With" drops that arrive before the app finished launching —
     /// drained once `appState` exists (see applicationDidFinishLaunching).
     private var pendingImportURLs: [URL] = []
@@ -35,6 +38,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         appState = AppState(launch: LaunchContext.current)
+        generationController = GenerationController(appState: appState, undoManager: windowUndoManager)
         buildMenu()
         buildWindow()
 
@@ -104,13 +108,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         // chrome (tall bar, translucent full-height sidebar material) when
         // the window carries a toolbar — even an empty one.
         let toolbar = NSToolbar(identifier: "labelkit.main")
-        toolbar.displayMode = .iconOnly
+        toolbar.displayMode = .iconAndLabel
         toolbar.showsBaselineSeparator = false
+        toolbar.delegate = self
         window.toolbar = toolbar
         window.toolbarStyle = .unified
         window.titlebarSeparatorStyle = .automatic
         window.contentView = NSHostingView(
-            rootView: RootView().environment(appState)
+            rootView: RootView()
+                .environment(appState)
+                .environment(generationController)
         )
         if window.frame.width < 900 { window.center() }
     }
@@ -184,6 +191,24 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         viewMenu.addItem(menuItem("Previous Image", String(UnicodeScalar(NSUpArrowFunctionKey)!), #selector(previousImage)))
         viewMenuItem.submenu = viewMenu
 
+        let detectMenuItem = NSMenuItem()
+        mainMenu.addItem(detectMenuItem)
+        let detectMenu = NSMenu(title: "Detect")
+        detectMenu.autoenablesItems = true   // via validateMenuItem, incl. the ⌘G key path
+        detectMenu.addItem(menuItem("Generate on Selected Images", "g", #selector(generateSelectedImages)))
+        detectMenu.addItem(menuItem("Generate on New Images", "", #selector(generateNewImages)))
+        detectMenu.addItem(menuItem("Generate on All Images…", "", #selector(generateAllImages)))
+        detectMenu.addItem(.separator())
+        // Model ▸ — built-ins + recent custom models, rebuilt on open so the
+        // checkmark tracks the current choice (like Open Recent).
+        let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+        modelMenu = NSMenu(title: "Model")
+        modelMenu.delegate = self
+        modelMenu.autoenablesItems = false
+        modelItem.submenu = modelMenu
+        detectMenu.addItem(modelItem)
+        detectMenuItem.submenu = detectMenu
+
         NSApp.mainMenu = mainMenu
     }
 
@@ -196,7 +221,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     // MARK: - Open Recent
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === openRecentMenu else { return }
+        if menu === openRecentMenu { rebuildOpenRecentMenu(menu); return }
+        if menu === modelMenu { rebuildModelMenu(menu); return }
+    }
+
+    private func rebuildOpenRecentMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         let recents = appState.recentLocations
         for location in recents {
@@ -215,6 +244,50 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         menu.addItem(clear)
     }
 
+    /// Built-in detectors, then remembered custom models, then Choose Model…;
+    /// the current choice carries a checkmark. Disabled mid-run so the detector
+    /// can't change under a running batch.
+    private func rebuildModelMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let running = generationController.isRunning
+        for kind in VisionBuiltinDetector.Kind.allCases {
+            let item = menuItem(VisionBuiltinDetector(kind).name, "", #selector(selectBuiltinModel(_:)))
+            item.representedObject = kind.rawValue
+            item.state = generationController.choice == .builtin(kind) ? .on : .off
+            item.isEnabled = !running
+            menu.addItem(item)
+        }
+        let recents = generationController.recentModelURLs
+        if !recents.isEmpty {
+            menu.addItem(.separator())
+            for url in recents {
+                let item = menuItem(url.deletingPathExtension().lastPathComponent, "",
+                                    #selector(selectRecentModel(_:)))
+                item.representedObject = url
+                item.toolTip = url.path
+                item.state = generationController.choice == .customModel(url) ? .on : .off
+                item.isEnabled = !running
+                menu.addItem(item)
+            }
+        }
+        menu.addItem(.separator())
+        let choose = menuItem("Choose Model…", "", #selector(chooseModel))
+        choose.isEnabled = !running
+        menu.addItem(choose)
+    }
+
+    /// Enable/disable the Detect generate commands by state — also drives the
+    /// ⌘G key path, which validates without ever opening the menu.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(generateSelectedImages), #selector(generateNewImages),
+             #selector(generateAllImages):
+            return appState.store != nil && !generationController.isRunning
+        default:
+            return true
+        }
+    }
+
     @objc private func openRecent(_ sender: NSMenuItem) {
         guard let location = sender.representedObject as? DatasetLocation else { return }
         appState.requestOpen(location)
@@ -227,4 +300,68 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     @objc private func zoomToFit() { appState.fitTrigger += 1 }
     @objc private func nextImage() { appState.selectNeighbor(offset: 1) }
     @objc private func previousImage() { appState.selectNeighbor(offset: -1) }
+
+    // MARK: - Detect
+
+    @objc private func generateSelectedImages() { generationController.generateSelected() }
+    @objc private func generateNewImages() { generationController.generate(scope: .newImages) }
+    @objc private func generateAllImages() { generationController.generate(scope: .wholeDataset) }
+
+    /// ⌘A fallback: when the sidebar table isn't first responder (e.g. focus is
+    /// on the canvas), Select All still selects every image. A focused table or
+    /// text field handles `selectAll:` earlier in the responder chain.
+    @objc func selectAll(_ sender: Any?) {
+        appState.selectAllImages()
+    }
+
+    @objc private func selectBuiltinModel(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let kind = VisionBuiltinDetector.Kind(rawValue: raw) else { return }
+        generationController.select(.builtin(kind))
+    }
+
+    @objc private func selectRecentModel(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        generationController.select(.customModel(url))
+    }
+
+    @objc private func chooseModel() { generationController.chooseCustomModel() }
+
+    // MARK: - Toolbar
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, .generationOptions, .generate]
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.generate, .generationOptions, .flexibleSpace, .space]
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        switch identifier {
+        case .generate:
+            return hostedItem(identifier, label: "Generate",
+                              GenerateControlView(controller: generationController, appState: appState))
+        case .generationOptions:
+            return hostedItem(identifier, label: "Options",
+                              GenerationOptionsView(controller: generationController))
+        default:
+            return nil
+        }
+    }
+
+    private func hostedItem(_ identifier: NSToolbarItem.Identifier, label: String,
+                            _ view: some View) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = label
+        item.visibilityPriority = .high
+        item.view = NSHostingView(rootView: view)
+        return item
+    }
+}
+
+extension NSToolbarItem.Identifier {
+    static let generate = NSToolbarItem.Identifier("labelkit.generate")
+    static let generationOptions = NSToolbarItem.Identifier("labelkit.generationOptions")
 }

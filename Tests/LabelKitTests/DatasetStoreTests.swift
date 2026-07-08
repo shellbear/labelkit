@@ -225,4 +225,62 @@ final class DatasetStoreTests: XCTestCase {
         undo.undo()
         XCTAssertEqual(entry.boxes[0].label, "card")
     }
+
+    // MARK: - Batch add (generation apply path)
+
+    func testAddBoxesIsAdditiveDirtiesAndRegistersLabels() throws {
+        let store = try makeStore()
+        let entry = try XCTUnwrap(store.entry(for: "b.jpg"))   // already has one "card"
+        store.addBoxes(
+            [BoundingBox(label: "card", rect: CGRect(x: 0, y: 0, width: 5, height: 5)),
+             BoundingBox(label: "star", rect: CGRect(x: 9, y: 9, width: 5, height: 5))],
+            to: entry, undoManager: nil)
+        XCTAssertEqual(entry.boxes.count, 3)                   // existing box preserved
+        XCTAssertTrue(store.isDirty)
+        XCTAssertEqual(store.labels.ordered, ["card", "star"])
+        XCTAssertEqual(store.labelUsage(), ["card": 3, "star": 1])
+    }
+
+    func testAddBoxesUndoRemovesExactlyThoseBoxesAndRedoRestoresIDs() throws {
+        let store = try makeStore()
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        let entry = try XCTUnwrap(store.entry(for: "b.jpg"))
+        let originalIDs = Set(entry.boxes.map(\.id))
+
+        let added = [BoundingBox(label: "card", rect: CGRect(x: 0, y: 0, width: 5, height: 5)),
+                     BoundingBox(label: "card", rect: CGRect(x: 9, y: 9, width: 5, height: 5))]
+        undo.beginUndoGrouping()
+        store.addBoxes(added, to: entry, undoManager: undo)
+        undo.endUndoGrouping()
+        XCTAssertEqual(entry.boxes.count, 3)
+
+        undo.undo()
+        XCTAssertEqual(Set(entry.boxes.map(\.id)), originalIDs)   // only the added ones removed
+        undo.redo()
+        XCTAssertEqual(entry.boxes.count, 3)
+        XCTAssertTrue(added.allSatisfy { box in entry.boxes.contains { $0.id == box.id } })
+    }
+
+    func testGenerationRunAcrossImagesIsOneUndoStep() throws {
+        let store = try makeStore()
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        let a = try XCTUnwrap(store.entry(for: "a.jpg"))
+        let c = try XCTUnwrap(store.entry(for: "c.jpg"))
+
+        // The controller wraps a whole multi-image run in one explicit group.
+        undo.beginUndoGrouping()
+        store.addBoxes([BoundingBox(label: "card", rect: CGRect(x: 1, y: 1, width: 2, height: 2))],
+                       to: a, undoManager: undo)
+        store.addBoxes([BoundingBox(label: "card", rect: CGRect(x: 3, y: 3, width: 2, height: 2))],
+                       to: c, undoManager: undo)
+        undo.endUndoGrouping()
+        XCTAssertEqual(a.boxes.count, 1)
+        XCTAssertEqual(c.boxes.count, 1)
+
+        undo.undo()   // one ⌘Z clears the entire run
+        XCTAssertTrue(a.boxes.isEmpty)
+        XCTAssertTrue(c.boxes.isEmpty)
+    }
 }
