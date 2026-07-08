@@ -35,8 +35,8 @@ struct DetectCommand: ParsableCommand {
     @Option(name: .long, help: "Custom Core ML model path (.mlmodel/.mlpackage/.mlmodelc).")
     var model: String?
 
-    @Option(name: .long, help: "Built-in Vision detector name.")
-    var detector: String?
+    @Option(name: .long, help: "Built-in Vision detector (no model file needed).")
+    var detector: VisionBuiltinDetector.Kind?
 
     @Option(name: [.customShort("l"), .long],
             help: "Label for localize-only detectors (rectangles, faces, …). Defaults to the detector's own.")
@@ -133,11 +133,9 @@ struct DetectCommand: ParsableCommand {
             } catch {
                 throw ValidationError("Couldn't load model \(path): \(describe(error))")
             }
-        case let (nil, name?):
-            guard let kind = VisionBuiltinDetector.Kind(rawValue: name.lowercased()) else {
-                let all = VisionBuiltinDetector.Kind.allCases.map(\.rawValue).joined(separator: ", ")
-                throw ValidationError("Unknown detector '\(name)'. Choose one of: \(all).")
-            }
+        case let (nil, kind?):
+            // ArgumentParser already rejected any name outside the enum (and
+            // listed the valid ones), so this is always a known kind.
             let builtin = VisionBuiltinDetector(kind)
             return DetectorSpec(detector: builtin, name: builtin.name, source: "vision")
         }
@@ -252,3 +250,9 @@ private extension String {
         count >= width ? self : self + String(repeating: " ", count: width - count)
     }
 }
+
+// Teach ArgumentParser the built-in detectors: because `Kind` is a
+// `String`-backed `CaseIterable`, this one line yields parsing, `--help` value
+// listing ("rectangles, faces, …"), and shell completion — all sourced from the
+// same library enum the GUI's detector menu uses, so they can't drift apart.
+extension VisionBuiltinDetector.Kind: @retroactive ExpressibleByArgument {}

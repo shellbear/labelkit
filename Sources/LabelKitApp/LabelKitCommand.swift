@@ -34,43 +34,53 @@ struct OpenCommand: ParsableCommand {
     @Option(name: .long, help: "Glob filter for image filenames, e.g. '*.jpg'.")
     var images: String?
 
+    @Flag(name: [.customShort("w"), .long],
+          help: "Run one foreground instance tied to the window's lifetime — don't hand off to a running copy or relaunch via the .app. Blocks until the window closes. (Handy for scripting and tests.)")
+    var wait = false
+
     func run() throws {
         // Resolve + validate before any UI exists: --help/--version and bad
         // paths never touch AppKit (clean stderr + exit codes for CLI use).
         let location = try DatasetLocator.resolve(path: path, annotationsOverride: annotations)
 
-        // Single instance, like Preview: hand the dataset to an already
-        // running copy and bring it forward instead of spawning a second one.
-        // (ArgumentParser invokes run() on the main thread.)
-        let handedOff = MainActor.assumeIsolated { () -> Bool in
-            guard let running = SingleInstance.runningInstance() else { return false }
-            if let location {
-                SingleInstance.postOpenRequest(location: location, imageGlob: images)
+        // `-w/--wait` (like `code --wait`): stay in the foreground as a single
+        // inline instance whose lifetime tracks the window — skip both detaching
+        // paths (handoff, .app relaunch) so a caller can spawn it, drive it, and
+        // kill it by PID.
+        if !wait {
+            // Single instance, like Preview: hand the dataset to an already
+            // running copy and bring it forward instead of spawning a second one.
+            // (ArgumentParser invokes run() on the main thread.)
+            let handedOff = MainActor.assumeIsolated { () -> Bool in
+                guard let running = SingleInstance.runningInstance() else { return false }
+                if let location {
+                    SingleInstance.postOpenRequest(location: location, imageGlob: images)
+                }
+                SingleInstance.activate(running)
+                return true
             }
-            SingleInstance.activate(running)
-            return true
-        }
-        if handedOff { return }
+            if handedOff { return }
 
-        // macOS 14+ denies terminal-spawned processes self-activation, and
-        // SwiftUI won't even create the window of an inactive app. Relaunch
-        // through LaunchServices via the sibling .app bundle when running as
-        // a bare binary — LS-launched apps activate and focus normally.
-        if Bundle.main.bundlePath.hasSuffix(".app") == false,
-           let bundle = Self.siblingAppBundle() {
-            var arguments = ["-a", bundle, "--args"]
-            if let location {
-                arguments.append(location.imagesDirectory.path)
-                arguments.append(contentsOf: ["--annotations", location.annotationsURL.path])
+            // macOS 14+ denies terminal-spawned processes self-activation, and
+            // SwiftUI won't even create the window of an inactive app. Relaunch
+            // through LaunchServices via the sibling .app bundle when running as
+            // a bare binary — LS-launched apps activate and focus normally.
+            if Bundle.main.bundlePath.hasSuffix(".app") == false,
+               let bundle = Self.siblingAppBundle() {
+                var arguments = ["-a", bundle, "--args"]
+                if let location {
+                    arguments.append(location.imagesDirectory.path)
+                    arguments.append(contentsOf: ["--annotations", location.annotationsURL.path])
+                }
+                if let images { arguments.append(contentsOf: ["--images", images]) }
+                let open = Process()
+                open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                open.arguments = arguments
+                try open.run()
+                open.waitUntilExit()
+                if open.terminationStatus == 0 { return }
+                // fall through to inline UI when `open` failed
             }
-            if let images { arguments.append(contentsOf: ["--images", images]) }
-            let open = Process()
-            open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            open.arguments = arguments
-            try open.run()
-            open.waitUntilExit()
-            if open.terminationStatus == 0 { return }
-            // fall through to inline UI when `open` failed
         }
 
         LaunchContext.current = LaunchContext(location: location, imageGlob: images)

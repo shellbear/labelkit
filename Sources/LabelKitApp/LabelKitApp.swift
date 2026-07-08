@@ -1,5 +1,6 @@
 import AppKit
 import LabelKit
+import Observation
 import SwiftUI
 
 /// Classic AppKit shell hosting SwiftUI content. SwiftUI's WindowGroup never
@@ -41,6 +42,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         generationController = GenerationController(appState: appState, undoManager: windowUndoManager)
         buildMenu()
         buildWindow()
+
+        // Show/hide the Generate toolbar items to track whether a dataset is
+        // open (they don't belong on the empty home screen).
+        observeDatasetPresence()
 
         // Later launches of the CLI/app hand their dataset to this instance.
         DistributedNotificationCenter.default().addObserver(
@@ -329,12 +334,49 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     // MARK: - Toolbar
 
+    private var hasDataset: Bool { appState?.store != nil }
+
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, .generationOptions, .generate]
+        // The empty home screen keeps a bare toolbar (the unified titlebar chrome
+        // needs one) but no Generate controls — they only apply to an open
+        // dataset. syncGenerationToolbarItems() adds them the moment one opens.
+        hasDataset ? [.flexibleSpace, .generationOptions, .generate] : [.flexibleSpace]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.generate, .generationOptions, .flexibleSpace, .space]
+    }
+
+    /// Watch `appState.store` and keep the toolbar's generation items in step —
+    /// `withObservationTracking` is one-shot, so re-arm on every change.
+    private func observeDatasetPresence() {
+        withObservationTracking {
+            _ = appState.store
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.syncGenerationToolbarItems()
+                self?.observeDatasetPresence()
+            }
+        }
+    }
+
+    /// Add the Generate/Options items once a dataset is open (remove them if we
+    /// ever fall back to the empty screen). Idempotent, so switching datasets is
+    /// a no-op.
+    private func syncGenerationToolbarItems() {
+        guard let toolbar = window?.toolbar else { return }
+        let shown = toolbar.items.contains { $0.itemIdentifier == .generate }
+        guard hasDataset != shown else { return }
+        if hasDataset {
+            toolbar.insertItem(withItemIdentifier: .generationOptions, at: toolbar.items.count)
+            toolbar.insertItem(withItemIdentifier: .generate, at: toolbar.items.count)
+        } else {
+            for index in toolbar.items.indices.reversed()
+            where toolbar.items[index].itemIdentifier == .generate
+                || toolbar.items[index].itemIdentifier == .generationOptions {
+                toolbar.removeItem(at: index)
+            }
+        }
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
