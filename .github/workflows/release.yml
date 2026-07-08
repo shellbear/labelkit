@@ -36,6 +36,13 @@ jobs:
             tar -czf "labelkit-${GITHUB_REF_NAME}-${arch}.tar.gz" -C "thin-$arch" labelkit labelkit.app
           done
           shasum -a 256 labelkit-*.tar.gz | tee checksums.txt
+          # Version-less aliases so the README can link
+          # releases/latest/download/labelkit-<arch>.tar.gz without hardcoding a
+          # version. Copied after checksums.txt so it stays version-scoped (the
+          # Homebrew tap reads the versioned names); the upload glob picks these up.
+          for arch in universal arm64 x86_64; do
+            cp "labelkit-${GITHUB_REF_NAME}-${arch}.tar.gz" "labelkit-${arch}.tar.gz"
+          done
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

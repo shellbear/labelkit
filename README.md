@@ -1,5 +1,11 @@
 # labelkit
 
+[![Latest release](https://img.shields.io/github/v/release/shellbear/labelkit?sort=semver&color=blue)](https://github.com/shellbear/labelkit/releases/latest)
+[![CI](https://github.com/shellbear/labelkit/actions/workflows/ci.yml/badge.svg)](https://github.com/shellbear/labelkit/actions/workflows/ci.yml)
+[![Downloads](https://img.shields.io/github/downloads/shellbear/labelkit/total?color=success)](https://github.com/shellbear/labelkit/releases)
+[![Platform](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)](https://github.com/shellbear/labelkit/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/shellbear/labelkit?color=informational)](LICENSE)
+
 A native macOS bounding-box annotator for **Apple Create ML object-detection
 datasets** — launched from the terminal, no project files, no accounts, no
 format conversion.
@@ -34,13 +40,35 @@ labelkit's contract:
 
 ## Install
 
+### Homebrew
+
 ```bash
 brew install shellbear/tap/labelkit
 ```
 
-Prebuilt universal binaries (arm64 + x86_64) also hang off every
-[GitHub release](https://github.com/shellbear/labelkit/releases). Or from
-source (macOS 14+, Xcode 15+):
+### Download a binary
+
+Latest release — a universal build, or a smaller per-arch slice:
+
+| Mac | Download |
+|---|---|
+| Apple Silicon | [`labelkit-arm64.tar.gz`](https://github.com/shellbear/labelkit/releases/latest/download/labelkit-arm64.tar.gz) |
+| Intel | [`labelkit-x86_64.tar.gz`](https://github.com/shellbear/labelkit/releases/latest/download/labelkit-x86_64.tar.gz) |
+| Universal | [`labelkit-universal.tar.gz`](https://github.com/shellbear/labelkit/releases/latest/download/labelkit-universal.tar.gz) |
+
+The builds are ad-hoc signed, so clear the quarantine flag on first run:
+
+```bash
+tar -xzf labelkit-*.tar.gz                             # → labelkit + labelkit.app (keep them together)
+xattr -dr com.apple.quarantine labelkit labelkit.app   # ad-hoc signed → clear Gatekeeper
+```
+
+Every release ships SHA-256 checksums; see the
+[releases page](https://github.com/shellbear/labelkit/releases) for all versions.
+
+### From source
+
+macOS 14+, Xcode 15+:
 
 ```bash
 git clone https://github.com/shellbear/labelkit && cd labelkit
