@@ -67,7 +67,10 @@ struct LabelKitCommand: ParsableCommand {
         if let override = ProcessInfo.processInfo.environment["LABELKIT_APP"] {
             return FileManager.default.fileExists(atPath: override) ? override : nil
         }
-        let binaryDirectory = URL(fileURLWithPath: CommandLine.arguments[0])
+        // Not argv[0]: a PATH invocation ("labelkit") carries no directory,
+        // which used to send every installed launch down the inline fallback.
+        let binaryDirectory = (Bundle.main.executableURL
+            ?? URL(fileURLWithPath: CommandLine.arguments[0]))
             .resolvingSymlinksInPath().deletingLastPathComponent()
         let candidates = [
             binaryDirectory.appendingPathComponent("labelkit.app").path,
