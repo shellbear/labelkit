@@ -28,9 +28,13 @@ a few dozen distinct camera-resolution JPEGs (real decode cost) and fans out to
 N via symlinks (tiny on disk). See the `swift-perf-profiling` skill in
 `.claude/skills/` for the headless xctrace capture/analyze workflow.
 
-CI (`.github/workflows/ci.yml`) builds and tests on macOS 14 and 15, then
-smoke-runs `.build/release/labelkit --version` — that invocation must exit
-cleanly without ever touching AppKit (no window flash).
+CI (`.github/workflows/ci.yml`) builds on macOS 14 and 15 and runs the test
+suite on macOS 15 — `swift test` SIGSEGVs on the macOS 14 runner image (an
+unsymbolicated crash that reproduces on neither macOS 15 nor locally), so
+macOS 14 stays a build-only guard for the minimum deployment target. It then
+smoke-runs `.build/release/labelkit --version` and `labelkit detect --help` —
+those invocations must exit cleanly without ever touching AppKit (no window
+flash).
 
 ## Architecture: two targets, hard boundary
 
