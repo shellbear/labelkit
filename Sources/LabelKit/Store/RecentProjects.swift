@@ -36,6 +36,19 @@ public struct RecentProjects {
             forKey: Self.defaultsKey)
     }
 
+    /// Drop a single dataset from the list (the welcome-screen ✕). Matched on
+    /// the same identity `record` dedupes by — images dir + annotations path.
+    public func remove(_ location: DatasetLocation) {
+        let entry = (imagesDirectory: location.imagesDirectory.path,
+                     annotationsURL: location.annotationsURL.path)
+        let updated = entries.filter { $0 != entry }
+        defaults.set(
+            updated.map {
+                ["imagesDirectory": $0.imagesDirectory, "annotationsURL": $0.annotationsURL]
+            },
+            forKey: Self.defaultsKey)
+    }
+
     public func clear() {
         defaults.removeObject(forKey: Self.defaultsKey)
     }

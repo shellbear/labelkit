@@ -14,6 +14,10 @@ public final class DatasetStore {
     public private(set) var entries: [ImageEntry] = []
     public private(set) var labels: LabelRegistry
     public private(set) var isDirty = false
+    /// Bumped on structural changes to `entries` (import). The AppKit sidebar
+    /// caches its row count, so it reloads when this changes; box edits, which
+    /// don't grow the list, deliberately leave it untouched.
+    public private(set) var entriesRevision = 0
 
     /// Entry order of the annotations file at load time — save preserves it
     /// and appends newly annotated images, keeping git diffs minimal.
@@ -102,6 +106,30 @@ public final class DatasetStore {
         let url = location.imagesDirectory.appendingPathComponent(entry.filename)
         urlCache[entry.filename] = url
         return url
+    }
+
+    // MARK: - Import
+
+    /// Append entries for freshly copied-in images. Newcomers land at the end
+    /// of the sidebar (after on-disk + missing-ghost rows); a later reopen
+    /// re-sorts them into name order via the scanner. Names already known are
+    /// skipped, so passing an already-present duplicate is a safe no-op.
+    ///
+    /// The file copy IS the persistence — an imported image carries no boxes
+    /// yet, so like any untouched on-disk image it gets no annotations entry
+    /// until boxed. Import therefore does NOT dirty the store.
+    @discardableResult
+    public func registerImported(_ filenames: [String]) -> [String] {
+        let directory = location.imagesDirectory
+        var added: [String] = []
+        for filename in filenames where indexByFilename[filename] == nil {
+            entries.append(ImageEntry(filename: filename))
+            indexByFilename[filename] = entries.count - 1
+            urlCache[filename] = directory.appendingPathComponent(filename)
+            added.append(filename)
+        }
+        if !added.isEmpty { entriesRevision += 1 }
+        return added
     }
 
     // MARK: - Mutations (all undoable, all dirtying)

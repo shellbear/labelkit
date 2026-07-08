@@ -113,6 +113,54 @@ final class DatasetStoreTests: XCTestCase {
         XCTAssertEqual(records.map(\.image), ["x.jpg"])
     }
 
+    // MARK: - Import
+
+    func testRegisterImportedAppendsEntriesWithoutDirtying() throws {
+        let store = try makeStore()
+        let revisionBefore = store.entriesRevision
+        // Simulate a copied-in file so imageURL / navigation resolve normally.
+        try Data([0xFF]).write(to: tempDir.appendingPathComponent("new.jpg"))
+
+        let added = store.registerImported(["new.jpg"])
+        XCTAssertEqual(added, ["new.jpg"])
+        XCTAssertEqual(store.entries.last?.filename, "new.jpg")     // appended at the end
+        XCTAssertEqual(store.index(of: "new.jpg"), store.entries.count - 1)
+        XCTAssertEqual(store.imageURL(for: store.entry(for: "new.jpg")!),
+                       tempDir.appendingPathComponent("new.jpg"))
+        XCTAssertEqual(store.entriesRevision, revisionBefore + 1)
+        XCTAssertFalse(store.isDirty)                               // copy is the persistence
+    }
+
+    func testRegisterImportedSkipsKnownNamesAndOnlyBumpsOnRealAdditions() throws {
+        let store = try makeStore()
+        let countBefore = store.entries.count
+        let revisionBefore = store.entriesRevision
+        // "a.jpg" already exists in the dataset; only "extra.jpg" is new.
+        let added = store.registerImported(["a.jpg", "extra.jpg"])
+        XCTAssertEqual(added, ["extra.jpg"])
+        XCTAssertEqual(store.entries.count, countBefore + 1)
+        XCTAssertEqual(store.entriesRevision, revisionBefore + 1)
+
+        // Re-registering only known names adds nothing and doesn't bump.
+        XCTAssertEqual(store.registerImported(["a.jpg", "extra.jpg"]), [])
+        XCTAssertEqual(store.entriesRevision, revisionBefore + 1)
+    }
+
+    func testImportedImageRoundTripsIntoAnnotationsOnceBoxed() throws {
+        let store = try makeStore()
+        store.registerImported(["new.jpg"])
+        let entry = try XCTUnwrap(store.entry(for: "new.jpg"))
+        // Unboxed import writes no entry.
+        XCTAssertFalse(store.recordsForSave().contains { $0.image == "new.jpg" })
+
+        store.addBox(BoundingBox(label: "card", rect: CGRect(x: 1, y: 1, width: 2, height: 2)),
+                     to: entry, undoManager: nil)
+        try store.save()
+        let records = try reloadRecords()
+        let saved = try XCTUnwrap(records.first { $0.image == "new.jpg" })  // appended
+        XCTAssertEqual(saved.boxes.count, 1)
+    }
+
     // MARK: - Label usage (memoized; invalidated on box/label change only)
 
     func testLabelUsageStaysCorrectAcrossMutations() throws {

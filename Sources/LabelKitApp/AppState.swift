@@ -118,6 +118,11 @@ final class AppState {
         open(location: location)
     }
 
+    func removeRecent(_ location: DatasetLocation) {
+        recentProjects.remove(location)
+        recentLocations = recentProjects.locations
+    }
+
     func clearRecents() {
         recentProjects.clear()
         recentLocations = []
@@ -137,6 +142,49 @@ final class AppState {
             }
         } catch {
             loadError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Import (drag & drop / Dock icon)
+
+    /// Single entry point for both drop sources (the window and the app icon).
+    /// Image files are copied into the open dataset and focused; a bare folder
+    /// drop opens that folder as a dataset. With nothing open, the dropped
+    /// images' parent folder becomes the dataset (siblings appear for free).
+    func importImages(_ urls: [URL]) {
+        let (images, folders) = ImageImporter.expand(urls)
+        guard !images.isEmpty else {
+            // No importable images — treat a dropped folder as "open this".
+            if let folder = folders.first,
+               let location = try? DatasetLocator.resolve(path: folder.path) {
+                requestOpen(location)
+            }
+            return
+        }
+        if store == nil {
+            let parent = images[0].deletingLastPathComponent()
+            guard let location = try? DatasetLocator.resolve(path: parent.path) else { return }
+            open(location: location)
+        }
+        guard let store else { return }
+        Task { await performImport(images, into: store) }
+    }
+
+    private func performImport(_ images: [URL], into store: DatasetStore) async {
+        let directory = store.location.imagesDirectory
+        let reserved = Set(store.entries.map(\.filename))
+        do {
+            // File copies (and the disk probing the plan does) run off the main
+            // thread so a large drop never blocks the UI; entry bookkeeping and
+            // selection hop back to the main actor.
+            let names = try await Task.detached {
+                let plan = ImageImporter.plan(sources: images, into: directory, reservedNames: reserved)
+                return try ImageImporter.execute(plan, into: directory)
+            }.value
+            store.registerImported(names)
+            if let last = names.last { selectedFilename = last }
+        } catch {
+            presentError("Could not import images", error)
         }
     }
 

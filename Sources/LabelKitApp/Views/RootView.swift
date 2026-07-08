@@ -4,6 +4,8 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppState.self) private var appState
+    /// Highlights the whole window while an image/folder drag hovers it.
+    @State private var isDropTargeted = false
 
     var body: some View {
         @Bindable var appState = appState
@@ -25,6 +27,20 @@ struct RootView: View {
                 .onChange(of: store.isDirty) { syncWindowChrome(store) }
             } else {
                 emptyState
+            }
+        }
+        // Drag images (or a folder) anywhere in the window to import them into
+        // the open dataset — or, with nothing open, to open their folder.
+        .dropDestination(for: URL.self) { urls, _ in
+            appState.importImages(urls)
+            return true
+        } isTargeted: { isDropTargeted = $0 }
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(.tint, lineWidth: 4)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
             }
         }
         .alert("Could Not Open Dataset",
@@ -83,7 +99,10 @@ struct RootView: View {
                 .foregroundStyle(.secondary)
                 .padding(.leading, 10)
             ForEach(appState.recentLocations, id: \.self) { location in
-                RecentProjectRow(location: location) { appState.requestOpen(location) }
+                RecentProjectRow(
+                    location: location,
+                    action: { appState.requestOpen(location) },
+                    onRemove: { appState.removeRecent(location) })
             }
         }
         .frame(width: 380)
@@ -92,31 +111,45 @@ struct RootView: View {
     private struct RecentProjectRow: View {
         let location: DatasetLocation
         let action: () -> Void
+        let onRemove: () -> Void
         @State private var hovering = false
 
         var body: some View {
-            Button(action: action) {
-                HStack(spacing: 8) {
-                    Image(systemName: "folder.fill")
-                        .foregroundStyle(.tint)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(location.displayName)
-                        Text((location.imagesDirectory.path as NSString).abbreviatingWithTildeInPath)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    Spacer(minLength: 0)
+            // The row itself opens the dataset (tap gesture, not a Button) so
+            // the trailing ✕ can be a real sibling Button — nested Buttons don't
+            // route clicks reliably on macOS. The child Button consumes its own
+            // clicks, so the row's tap fires everywhere except over the ✕.
+            HStack(spacing: 8) {
+                Image(systemName: "folder.fill")
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(location.displayName)
+                    Text((location.imagesDirectory.path as NSString).abbreviatingWithTildeInPath)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-                .padding(.vertical, 5)
-                .padding(.horizontal, 10)
-                .background(
-                    hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
-                    in: RoundedRectangle(cornerRadius: 6))
-                .contentShape(Rectangle())
+                Spacer(minLength: 0)
+                // Kept in layout (opacity, not if) so the text never reflows as
+                // it fades in on hover — revealed like Safari's Start Page items.
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .imageScale(.medium)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Remove from Recent")
+                .opacity(hovering ? 1 : 0)
+                .allowsHitTesting(hovering)
             }
-            .buttonStyle(.plain)
+            .padding(.vertical, 5)
+            .padding(.horizontal, 10)
+            .background(
+                hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
+                in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
             .onHover { hovering = $0 }
         }
     }

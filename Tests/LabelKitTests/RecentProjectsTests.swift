@@ -83,6 +83,33 @@ final class RecentProjectsTests: XCTestCase {
         XCTAssertEqual(recents.locations.first?.annotationsExists, true)
     }
 
+    func testRemoveDropsOnlyTheMatchingEntry() {
+        recents.record(location("a"))
+        recents.record(location("b"))
+        recents.record(location("c"))
+        recents.remove(location("b"))
+        XCTAssertEqual(recents.locations.map(\.displayName), ["c", "a"])
+        // Removing something not present is a harmless no-op.
+        recents.remove(location("zzz"))
+        XCTAssertEqual(recents.locations.map(\.displayName), ["c", "a"])
+    }
+
+    func testRemoveDistinguishesSameDirectoryDifferentAnnotations() {
+        let directory = URL(fileURLWithPath: "/tmp/shared")
+        let train = DatasetLocation(
+            imagesDirectory: directory,
+            annotationsURL: directory.appendingPathComponent("train.json"),
+            annotationsExists: false)
+        let test = DatasetLocation(
+            imagesDirectory: directory,
+            annotationsURL: directory.appendingPathComponent("test.json"),
+            annotationsExists: false)
+        recents.record(train)
+        recents.record(test)
+        recents.remove(train)
+        XCTAssertEqual(recents.locations.map(\.annotationsURL.lastPathComponent), ["test.json"])
+    }
+
     func testClearRemovesEverything() {
         recents.record(location("a"))
         recents.clear()

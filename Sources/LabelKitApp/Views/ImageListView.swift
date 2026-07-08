@@ -17,10 +17,13 @@ struct ImageListView: View {
     var body: some View {
         // Reading `selectedFilename` here (cheap now — no List) re-runs this
         // body on navigation and passes the new value into the representable,
-        // whose updateNSView just selects + scrolls the row.
+        // whose updateNSView just selects + scrolls the row. Reading
+        // `entriesRevision` likewise re-runs it after an import so the table
+        // reloads its new rows.
         SidebarTable(
             store: store,
             selected: appState.selectedFilename,
+            revision: store.entriesRevision,
             onSelect: { appState.selectedFilename = $0 }
         )
     }
@@ -29,6 +32,7 @@ struct ImageListView: View {
 private struct SidebarTable: NSViewRepresentable {
     let store: DatasetStore
     let selected: String?
+    let revision: Int
     let onSelect: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(store: store, onSelect: onSelect) }
@@ -59,7 +63,7 @@ private struct SidebarTable: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        context.coordinator.update(store: store, onSelect: onSelect)
+        context.coordinator.update(store: store, revision: revision, onSelect: onSelect)
         context.coordinator.syncSelection(to: selected)
     }
 
@@ -69,20 +73,26 @@ private struct SidebarTable: NSViewRepresentable {
         private var onSelect: (String) -> Void
         weak var table: NSTableView?
         private var storeID: ObjectIdentifier
+        private var revision: Int
         private var programmatic = false
 
         init(store: DatasetStore, onSelect: @escaping (String) -> Void) {
             self.store = store
             self.onSelect = onSelect
             self.storeID = ObjectIdentifier(store)
+            self.revision = store.entriesRevision
         }
 
-        func update(store: DatasetStore, onSelect: @escaping (String) -> Void) {
+        func update(store: DatasetStore, revision: Int, onSelect: @escaping (String) -> Void) {
             self.onSelect = onSelect
             let id = ObjectIdentifier(store)
             if id != storeID {  // dataset switched → rebuild rows
                 self.store = store
                 self.storeID = id
+                self.revision = revision
+                table?.reloadData()
+            } else if revision != self.revision {  // rows imported → reload new tail
+                self.revision = revision
                 table?.reloadData()
             }
         }

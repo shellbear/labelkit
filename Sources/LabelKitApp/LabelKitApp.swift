@@ -25,6 +25,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     private let windowUndoManager = UndoManager()
     private var window: NSWindow!
     private var openRecentMenu: NSMenu!
+    /// Icon/"Open With" drops that arrive before the app finished launching —
+    /// drained once `appState` exists (see applicationDidFinishLaunching).
+    private var pendingImportURLs: [URL] = []
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -46,6 +49,26 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         for delay in [0.0, 0.2] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { Self.tryActivate() }
         }
+
+        // Drain any icon/"Open With" drop that landed before appState existed.
+        if !pendingImportURLs.isEmpty {
+            let urls = pendingImportURLs
+            pendingImportURLs = []
+            appState.importImages(urls)
+        }
+    }
+
+    /// Files dropped on the Dock icon or opened via "Open With" (the bundle
+    /// declares public.image / public.folder in Info.plist). At cold launch
+    /// this can fire before appState exists, so buffer until it does.
+    func application(_ sender: NSApplication, open urls: [URL]) {
+        guard appState != nil else {
+            pendingImportURLs.append(contentsOf: urls)
+            return
+        }
+        window.makeKeyAndOrderFront(nil)
+        Self.tryActivate()
+        appState.importImages(urls)
     }
 
     @objc private func handleOpenRequest(_ note: Notification) {
