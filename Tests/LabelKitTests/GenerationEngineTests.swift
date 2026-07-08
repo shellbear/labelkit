@@ -1,44 +1,12 @@
 import CoreGraphics
 import Foundation
-import ImageIO
-import UniformTypeIdentifiers
 import XCTest
 @testable import LabelKit
 
+/// Exercises the streaming batch engine — fan-out, "only stream non-empty",
+/// additive de-duplication — with a stub detector, so it's deterministic and
+/// Vision-free (the Vision SDK's own behavior isn't labelkit's to test).
 final class GenerationEngineTests: XCTestCase {
-    var tempDir: URL!
-
-    override func setUpWithError() throws {
-        tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("labelkit-gen-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-    }
-
-    override func tearDownWithError() throws {
-        try? FileManager.default.removeItem(at: tempDir)
-    }
-
-    /// Write a `rect`-on-light-background PNG (rect nil → blank) and return its URL.
-    private func writeImage(_ name: String, size: CGSize, rect: CGRect?) throws -> URL {
-        let ctx = CGContext(
-            data: nil, width: Int(size.width), height: Int(size.height),
-            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        ctx.setFillColor(CGColor(red: 0.92, green: 0.92, blue: 0.92, alpha: 1))
-        ctx.fill(CGRect(origin: .zero, size: size))
-        if let rect {
-            ctx.setFillColor(CGColor(red: 0.06, green: 0.06, blue: 0.06, alpha: 1))
-            ctx.fill(rect)
-        }
-        let image = ctx.makeImage()!
-        let url = tempDir.appendingPathComponent(name)
-        let dest = CGImageDestinationCreateWithURL(
-            url as CFURL, UTType.png.identifier as CFString, 1, nil)!
-        CGImageDestinationAddImage(dest, image, nil)
-        XCTAssertTrue(CGImageDestinationFinalize(dest))
-        return url
-    }
-
     private func collect(_ stream: AsyncStream<GenerationEngine.ImageResult>) async
         -> [String: [BoundingBox]] {
         var results: [String: [BoundingBox]] = [:]
@@ -46,53 +14,53 @@ final class GenerationEngineTests: XCTestCase {
         return results
     }
 
-    func testRunsOverBatchAndStreamsOnlyNonEmptyResults() async throws {
-        try skipIfCI()
-        let size = CGSize(width: 600, height: 400)
-        _ = try writeImage("rect.png", size: size, rect: CGRect(x: 150, y: 120, width: 300, height: 160))
-        _ = try writeImage("blank.png", size: size, rect: nil)
+    private var cardDetector: StubDetector {
+        StubDetector([
+            RawDetection(boundingBox: CGRect(x: 0.25, y: 0.3, width: 0.5, height: 0.4),
+                         label: "card", confidence: 0.9),
+        ])
+    }
 
-        let jobs = ["rect.png", "blank.png"].map {
-            GenerationJob(filename: $0, imageURL: tempDir.appendingPathComponent($0), existingBoxes: [])
-        }
-        var settings = GenerationEngine.Settings()
-        settings.fallbackLabel = "rectangle"
-        let stream = GenerationEngine.stream(
-            jobs: jobs, detector: VisionBuiltinDetector(.rectangles), settings: settings)
+    func testStreamsNewBoxesForImagesThatDetectSomething() async throws {
+        let url = try writeTempPNG(size: CGSize(width: 600, height: 400))
+        defer { try? FileManager.default.removeItem(at: url) }
 
-        let results = await collect(stream)
+        let results = await collect(GenerationEngine.stream(
+            jobs: [GenerationJob(filename: "a.png", imageURL: url, existingBoxes: [])],
+            detector: cardDetector, settings: GenerationEngine.Settings()))
 
-        // Blank yields no result (nothing to apply); the rect one should.
-        XCTAssertNil(results["blank.png"])
-        try XCTSkipIf(results["rect.png"] == nil, "Vision found no rectangle")
-        let boxes = try XCTUnwrap(results["rect.png"])
-        XCTAssertFalse(boxes.isEmpty)
-        for box in boxes {
-            XCTAssertEqual(box.label, "rectangle")
-            XCTAssertTrue(CGRect(origin: .zero, size: size).contains(box.rect))
-        }
+        let boxes = try XCTUnwrap(results["a.png"])
+        XCTAssertEqual(boxes.map(\.label), ["card"])
+        XCTAssertTrue(CGRect(x: 0, y: 0, width: 600, height: 400).contains(boxes[0].rect))
+    }
+
+    func testDoesNotStreamImagesWithNoDetections() async throws {
+        let url = try writeTempPNG(size: CGSize(width: 600, height: 400))
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let results = await collect(GenerationEngine.stream(
+            jobs: [GenerationJob(filename: "blank.png", imageURL: url, existingBoxes: [])],
+            detector: StubDetector([]), settings: GenerationEngine.Settings()))
+
+        XCTAssertNil(results["blank.png"])   // nothing to apply → not streamed
     }
 
     func testDedupesAgainstExistingBoxesSoReRunAddsNothing() async throws {
-        try skipIfCI()
-        let size = CGSize(width: 600, height: 400)
-        _ = try writeImage("rect.png", size: size, rect: CGRect(x: 150, y: 120, width: 300, height: 160))
-        let url = tempDir.appendingPathComponent("rect.png")
-        var settings = GenerationEngine.Settings()
-        settings.fallbackLabel = "rectangle"
-        let detector = VisionBuiltinDetector(.rectangles)
+        let url = try writeTempPNG(size: CGSize(width: 600, height: 400))
+        defer { try? FileManager.default.removeItem(at: url) }
+        let detector = cardDetector
 
-        // First pass: discover the boxes.
+        // First pass discovers the box.
         let first = await collect(GenerationEngine.stream(
-            jobs: [GenerationJob(filename: "rect.png", imageURL: url, existingBoxes: [])],
-            detector: detector, settings: settings))
-        let found = first["rect.png"] ?? []
-        try XCTSkipIf(found.isEmpty, "Vision found no rectangle")
+            jobs: [GenerationJob(filename: "a.png", imageURL: url, existingBoxes: [])],
+            detector: detector, settings: GenerationEngine.Settings()))
+        let found = try XCTUnwrap(first["a.png"])
+        XCTAssertFalse(found.isEmpty)
 
-        // Second pass with those boxes already present → nothing new to add.
+        // Second pass with it already present → nothing new streamed.
         let second = await collect(GenerationEngine.stream(
-            jobs: [GenerationJob(filename: "rect.png", imageURL: url, existingBoxes: found)],
-            detector: detector, settings: settings))
-        XCTAssertNil(second["rect.png"])   // nothing new streamed on the re-run
+            jobs: [GenerationJob(filename: "a.png", imageURL: url, existingBoxes: found)],
+            detector: detector, settings: GenerationEngine.Settings()))
+        XCTAssertNil(second["a.png"])
     }
 }

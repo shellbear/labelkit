@@ -1,65 +1,58 @@
 import CoreGraphics
 import Foundation
-import ImageIO
-import UniformTypeIdentifiers
 import XCTest
 @testable import LabelKit
 
 /// Covers the shared per-image primitive both the GUI engine and the `detect`
-/// CLI call — decode + detect + geometry, in one place. Uses a built-in Vision
-/// detector so it needs no model file (the real pipeline still runs headlessly).
+/// CLI call — decode + geometry mapping — using a stub detector so it's
+/// deterministic and Vision-free.
 final class SingleImageDetectionTests: XCTestCase {
-    func testReadsPixelSizeAndRunsDetector() throws {
-        try skipIfCI()
+    func testDecodesReadsSizeAndMapsDetectionsToPixelBoxes() throws {
         let size = CGSize(width: 600, height: 400)
-        let url = try writeImage(size: size, rect: CGRect(x: 150, y: 120, width: 300, height: 160))
+        let url = try writeTempPNG(size: size)
         defer { try? FileManager.default.removeItem(at: url) }
 
+        // One detection in Vision's normalized, bottom-left space.
+        let detector = StubDetector([
+            RawDetection(boundingBox: CGRect(x: 0.25, y: 0.3, width: 0.5, height: 0.4),
+                         label: "card", confidence: 0.9),
+        ])
         let result = try SingleImageDetection.run(
-            imageURL: url, detector: VisionBuiltinDetector(.rectangles),
-            maxDecodePixel: 1536, fallbackLabel: "rect")
+            imageURL: url, detector: detector, maxDecodePixel: 1536, fallbackLabel: "object")
 
         XCTAssertEqual(result.pixelSize, size)
-        // Candidates carry confidence and map inside the image bounds.
-        for candidate in result.candidates {
-            XCTAssertTrue((0...1).contains(candidate.confidence))
-            XCTAssertTrue(CGRect(origin: .zero, size: size).contains(candidate.box.rect))
-        }
+        let candidate = try XCTUnwrap(result.candidates.first)
+        XCTAssertEqual(candidate.confidence, 0.9)
+        XCTAssertEqual(candidate.box.label, "card")
+        // Normalized bottom-left → image pixels top-left, with the Y-flip:
+        // x=0.25·600=150, y=(1−0.7)·400=120, w=0.5·600=300, h=0.4·400=160.
+        let rect = candidate.box.rect
+        XCTAssertEqual(rect.minX, 150, accuracy: 0.001)
+        XCTAssertEqual(rect.minY, 120, accuracy: 0.001)
+        XCTAssertEqual(rect.width, 300, accuracy: 0.001)
+        XCTAssertEqual(rect.height, 160, accuracy: 0.001)
+    }
+
+    func testUnlabeledDetectionTakesFallbackLabel() throws {
+        let url = try writeTempPNG(size: CGSize(width: 200, height: 200))
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let detector = StubDetector([
+            RawDetection(boundingBox: CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2), confidence: 0.7),
+        ])
+        let result = try SingleImageDetection.run(
+            imageURL: url, detector: detector, maxDecodePixel: 1536, fallbackLabel: "thing")
+        XCTAssertEqual(result.candidates.first?.box.label, "thing")
     }
 
     func testUnreadableImageThrows() {
-        let missing = URL(fileURLWithPath: NSTemporaryDirectory())
+        let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("labelkit-does-not-exist.jpg")
         XCTAssertThrowsError(
-            try SingleImageDetection.run(imageURL: missing,
-                                         detector: VisionBuiltinDetector(.rectangles),
+            try SingleImageDetection.run(imageURL: missing, detector: StubDetector(),
                                          maxDecodePixel: 1536, fallbackLabel: "x")
         ) { error in
             XCTAssertEqual(error as? SingleImageDetection.Failure, .unreadableImage)
         }
-    }
-
-    // MARK: -
-
-    private func writeImage(size: CGSize, rect: CGRect) throws -> URL {
-        let ctx = CGContext(
-            data: nil, width: Int(size.width), height: Int(size.height),
-            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        ctx.setFillColor(CGColor(red: 0.92, green: 0.92, blue: 0.92, alpha: 1))
-        ctx.fill(CGRect(origin: .zero, size: size))
-        ctx.setFillColor(CGColor(red: 0.06, green: 0.06, blue: 0.06, alpha: 1))
-        ctx.fill(rect)
-        let image = ctx.makeImage()!
-
-        let url = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("labelkit-\(UUID().uuidString).png")
-        guard let destination = CGImageDestinationCreateWithURL(
-            url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
-            throw XCTSkip("couldn't create PNG destination")
-        }
-        CGImageDestinationAddImage(destination, image, nil)
-        XCTAssertTrue(CGImageDestinationFinalize(destination))
-        return url
     }
 }
