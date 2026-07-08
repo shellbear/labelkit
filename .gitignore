@@ -3,3 +3,15 @@
 .DS_Store
 *.xcodeproj
 xcuserdata/
+
+# Editors / IDEs
+.vscode/
+.idea/
+.zed/
+.fleet/
+*.swp
+*.swo
+*~
+
+# Claude Code: share checked-in skills, keep personal/local settings out
+.claude/settings.local.json
