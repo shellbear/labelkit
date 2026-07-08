@@ -46,6 +46,17 @@ Profile **release** (`-c release` / Release config), never debug — debug
 builds have wildly different performance. Launch the app with a realistic
 dataset (the bug usually only shows at scale — thousands of items, big files).
 
+Generating a large realistic dataset is the part people get stuck on — real
+*content* is cheap to fake, but thousands of realistically-sized *files* are
+not. Don't hand-roll it every time: if the project ships a fixtures generator,
+use it. In labelkit that's `scripts/make-sample-dataset.swift`
+(`swift scripts/make-sample-dataset.swift 10000 /tmp/labelkit-sample`) — it
+draws a few dozen distinct camera-resolution JPEGs (real decode cost) and
+fans out to N via symlinks (tiny on disk), so per-item decode cost stays
+representative. The reusable trick for any image-heavy app: generate a small
+set of distinct, realistically-sized base files, then symlink to N unique
+names — unique URLs give real cache-miss decodes without N physical files.
+
 ### 2. Capture a trace while driving the app
 
 Use `scripts/capture.sh` (below). It attaches `xctrace` to the running

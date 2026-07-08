@@ -21,6 +21,12 @@ swift test                           # headless library tests
 The `Makefile` wraps these (`make build/test/app/universal/install`);
 `make install` puts the CLI + app bundle into the Homebrew prefix's `bin`.
 
+For scale/perf testing, generate a realistic dataset instead of hand-rolling
+one: `swift scripts/make-sample-dataset.swift 10000 /tmp/labelkit-sample` draws
+a few dozen distinct camera-resolution JPEGs (real decode cost) and fans out to
+N via symlinks (tiny on disk). See the `swift-perf-profiling` skill in
+`.claude/skills/` for the headless xctrace capture/analyze workflow.
+
 CI (`.github/workflows/ci.yml`) builds and tests on macOS 14 and 15, then
 smoke-runs `.build/release/labelkit --version` — that invocation must exit
 cleanly without ever touching AppKit (no window flash).
