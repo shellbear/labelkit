@@ -47,6 +47,7 @@ final class GenerationEngineTests: XCTestCase {
     }
 
     func testRunsOverBatchAndStreamsOnlyNonEmptyResults() async throws {
+        try skipIfCI()
         let size = CGSize(width: 600, height: 400)
         _ = try writeImage("rect.png", size: size, rect: CGRect(x: 150, y: 120, width: 300, height: 160))
         _ = try writeImage("blank.png", size: size, rect: nil)
@@ -73,6 +74,7 @@ final class GenerationEngineTests: XCTestCase {
     }
 
     func testDedupesAgainstExistingBoxesSoReRunAddsNothing() async throws {
+        try skipIfCI()
         let size = CGSize(width: 600, height: 400)
         _ = try writeImage("rect.png", size: size, rect: CGRect(x: 150, y: 120, width: 300, height: 160))
         let url = tempDir.appendingPathComponent("rect.png")

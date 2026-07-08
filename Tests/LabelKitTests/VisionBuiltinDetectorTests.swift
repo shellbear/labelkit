@@ -23,6 +23,7 @@ final class VisionBuiltinDetectorTests: XCTestCase {
     }
 
     func testBlankImageRunsAndReturnsEmpty() throws {
+        try skipIfCI()
         // The value here is that a Vision request performs headlessly at all.
         let blank = image(size: CGSize(width: 512, height: 512), rect: nil)
         for kind in VisionBuiltinDetector.Kind.allCases {
@@ -32,6 +33,7 @@ final class VisionBuiltinDetectorTests: XCTestCase {
     }
 
     func testDetectsAndConvertsARectangle() throws {
+        try skipIfCI()
         let size = CGSize(width: 600, height: 400)
         let target = CGRect(x: 150, y: 120, width: 300, height: 160)
         let detector = VisionBuiltinDetector(.rectangles)

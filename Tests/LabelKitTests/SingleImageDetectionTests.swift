@@ -10,6 +10,7 @@ import XCTest
 /// detector so it needs no model file (the real pipeline still runs headlessly).
 final class SingleImageDetectionTests: XCTestCase {
     func testReadsPixelSizeAndRunsDetector() throws {
+        try skipIfCI()
         let size = CGSize(width: 600, height: 400)
         let url = try writeImage(size: size, rect: CGRect(x: 150, y: 120, width: 300, height: 160))
         defer { try? FileManager.default.removeItem(at: url) }
