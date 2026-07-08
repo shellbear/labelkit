@@ -24,18 +24,19 @@ public final class DetailImageLoader {
     }
 
     /// Show `url` (dropping any previous image) at `neededMaxPixel`.
-    public func display(url: URL, imageSize: CGSize, neededMaxPixel: CGFloat) {
+    /// `immediate` false (a held-arrow scrub) debounces the cache-miss decode.
+    public func display(url: URL, imageSize: CGSize, neededMaxPixel: CGFloat, immediate: Bool = true) {
         if url != currentURL {
             currentURL = url
             image = nil
             decodedMaxDimension = 0
             nominalMaxDimension = max(imageSize.width, imageSize.height)
         }
-        ensure(neededMaxPixel)
+        ensure(neededMaxPixel, immediate: immediate)
     }
 
     /// Re-decode if the displayed physical size outgrew the decoded bitmap.
-    public func ensure(_ neededMaxPixel: CGFloat) {
+    public func ensure(_ neededMaxPixel: CGFloat, immediate: Bool = true) {
         guard let url = currentURL, nominalMaxDimension > 0 else { return }
         let target = min(nominalMaxDimension, max(neededMaxPixel, 64))
         if image != nil, decodedMaxDimension >= min(nominalMaxDimension, target / 1.25),
@@ -45,14 +46,35 @@ public final class DetailImageLoader {
         let nominal = nominalMaxDimension
         requestTask?.cancel()
         requestTask = Task { [weak self, service] in
+            // Already decoded (a revisit): publish instantly, no debounce.
+            if let cached = await service.cachedImage(url: url, maxPixel: target, nominalMax: nominal) {
+                self?.publish(cached, from: url)
+                return
+            }
+            // During a held-arrow scrub, coalesce: this loader is torn down
+            // (canvas .onDisappear → cancel()) as the next image arrives,
+            // cancelling the sleep before any full 4000px decode starts — so a
+            // scrub spends CPU on cheap thumbnails, not doomed decodes. A
+            // discrete step (immediate) skips the wait and sharpens at once.
+            if !immediate {
+                try? await Task.sleep(nanoseconds: Self.settleDelayNanos)
+                guard !Task.isCancelled else { return }
+            }
             let decoded = await service.image(url: url, maxPixel: target, nominalMax: nominal)
-            guard !Task.isCancelled, let self, url == self.currentURL, let decoded else { return }
-            // Never replace a sharper image with a blurrier one (stale task).
-            let dimension = CGFloat(max(decoded.width, decoded.height))
-            guard dimension > self.decodedMaxDimension || self.image == nil else { return }
-            self.image = decoded
-            self.decodedMaxDimension = dimension
+            guard let decoded else { return }
+            self?.publish(decoded, from: url)
         }
+    }
+
+    private static let settleDelayNanos: UInt64 = 120_000_000  // 120 ms
+
+    private func publish(_ decoded: CGImage, from url: URL) {
+        guard !Task.isCancelled, url == currentURL else { return }
+        // Never replace a sharper image with a blurrier one (stale task).
+        let dimension = CGFloat(max(decoded.width, decoded.height))
+        guard dimension > decodedMaxDimension || image == nil else { return }
+        image = decoded
+        decodedMaxDimension = dimension
     }
 
     /// Drop the in-flight request when the canvas goes away (navigation), so

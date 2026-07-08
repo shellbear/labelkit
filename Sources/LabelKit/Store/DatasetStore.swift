@@ -19,6 +19,11 @@ public final class DatasetStore {
     /// and appends newly annotated images, keeping git diffs minimal.
     private var savedOrder: [String]
     private var indexByFilename: [String: Int] = [:]
+    /// Precomputed image URLs. `URL.appendingPathComponent` is surprisingly
+    /// costly (path normalization) and the sidebar asked for one per row on
+    /// every List diff — a profiler trace put it at the top of our main-thread
+    /// scrub cost. Build them once at load; lookups are then just a hash.
+    private var urlCache: [String: URL] = [:]
     /// Memoized label→count over all boxes. Rebuilt lazily; invalidated only
     /// when box membership or a box label changes (NOT on geometry edits), so
     /// the inspector's per-render `labelUsage()` stays O(1) even mid-drag.
@@ -76,6 +81,11 @@ public final class DatasetStore {
         labels = registry
         indexByFilename = Dictionary(
             uniqueKeysWithValues: loaded.enumerated().map { ($0.element.filename, $0.offset) })
+        let imagesDirectory = location.imagesDirectory
+        urlCache = Dictionary(
+            uniqueKeysWithValues: loaded.map {
+                ($0.filename, imagesDirectory.appendingPathComponent($0.filename))
+            })
     }
 
     public func entry(for filename: String) -> ImageEntry? {
@@ -88,7 +98,10 @@ public final class DatasetStore {
     }
 
     public func imageURL(for entry: ImageEntry) -> URL {
-        location.imagesDirectory.appendingPathComponent(entry.filename)
+        if let cached = urlCache[entry.filename] { return cached }
+        let url = location.imagesDirectory.appendingPathComponent(entry.filename)
+        urlCache[entry.filename] = url
+        return url
     }
 
     // MARK: - Mutations (all undoable, all dirtying)

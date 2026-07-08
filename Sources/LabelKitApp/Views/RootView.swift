@@ -10,17 +10,16 @@ struct RootView: View {
         Group {
             if let store = appState.store {
                 NavigationSplitView {
-                    ImageListView(store: store, selection: $appState.selectedFilename)
+                    ImageListView(store: store)
                         .navigationSplitViewColumnWidth(min: 220, ideal: 260)
                 } detail: {
-                    if let entry = appState.selectedEntry {
-                        CanvasView(store: store, entry: entry)
-                            .id(entry.filename)
-                    } else {
-                        ContentUnavailableView(
-                            "No Image Selected",
-                            systemImage: "photo.on.rectangle.angled")
-                    }
+                    // The selected-image read lives in DetailPane, NOT here:
+                    // if RootView.body read `selectedEntry` it would re-run on
+                    // every arrow step and re-create the whole split view —
+                    // including the sidebar List, which then re-diffs all 10k
+                    // rows (~270 ms hang/step in a profiler trace). Isolating it
+                    // means only the detail pane re-renders on navigation.
+                    DetailPane(store: store)
                 }
                 .onAppear { syncWindowChrome(store) }
                 .onChange(of: store.isDirty) { syncWindowChrome(store) }
@@ -35,6 +34,27 @@ struct RootView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(appState.loadError ?? "")
+        }
+    }
+
+    /// Detail pane, split out so that reading the selection re-renders only
+    /// this subtree on navigation — never the sidebar.
+    private struct DetailPane: View {
+        let store: DatasetStore
+        @Environment(AppState.self) private var appState
+
+        var body: some View {
+            if let entry = appState.selectedEntry {
+                // Keyed on the dataset, NOT the image: navigating between images
+                // updates the canvas in place (cheap), while switching datasets
+                // recreates it so the view model and loader re-capture the store.
+                CanvasView(store: store, entry: entry)
+                    .id(store.location.annotationsURL)
+            } else {
+                ContentUnavailableView(
+                    "No Image Selected",
+                    systemImage: "photo.on.rectangle.angled")
+            }
         }
     }
 

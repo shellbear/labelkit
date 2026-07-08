@@ -17,6 +17,24 @@ final class AppState {
     private var imageGlob: String?
     private let recentProjects: RecentProjects
 
+    // Arrow-key velocity, so a discrete step decodes immediately while a held
+    // key (rapid successive steps) shows a soft placeholder and debounces the
+    // expensive decode. Not observed — read imperatively when a canvas opens.
+    @ObservationIgnored private var lastNeighborNavAt: CFAbsoluteTime = 0
+    @ObservationIgnored private var lastStepWasRapid = false
+    private static let rapidGap: CFAbsoluteTime = 0.15
+
+    // Detail-image prefetch. The canvas reports the physical pixel size it
+    // renders at so neighbours are decoded at the resolution they'll be shown.
+    @ObservationIgnored var detailDisplayPixels: CGFloat = 2200
+    @ObservationIgnored private var prefetchTasks: [Task<Void, Never>] = []
+
+    /// True only while an arrow key is actually being held (the previous step
+    /// landed < `rapidGap` ago and recently). A single press reads false.
+    var isRapidNavigation: Bool {
+        lastStepWasRapid && CFAbsoluteTimeGetCurrent() - lastNeighborNavAt < 0.25
+    }
+
     init(launch: LaunchContext, defaults: UserDefaults = labelkitDefaults()) {
         imageGlob = launch.imageGlob
         recentProjects = RecentProjects(defaults: defaults)
@@ -48,9 +66,34 @@ final class AppState {
 
     func selectNeighbor(offset: Int) {
         guard let store, !store.entries.isEmpty else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        lastStepWasRapid = now - lastNeighborNavAt < Self.rapidGap
+        lastNeighborNavAt = now
+        prefetchTasks.forEach { $0.cancel() }
+        prefetchTasks = []
         let index = selectedFilename.flatMap { store.index(of: $0) } ?? 0
         let next = min(max(index + offset, 0), store.entries.count - 1)
         selectedFilename = store.entries[next].filename
+        // Prefetch ahead only when stepping deliberately: during a fast scrub
+        // the decode is debounced and the CPU is reserved for cheap thumbnails.
+        if !lastStepWasRapid {
+            prefetchAhead(store: store, from: next, direction: offset >= 0 ? 1 : -1)
+        }
+    }
+
+    private func prefetchAhead(store: DatasetStore, from index: Int, direction: Int) {
+        let pixels = detailDisplayPixels
+        for step in 1...2 {
+            let j = index + direction * step
+            guard store.entries.indices.contains(j) else { break }
+            let entry = store.entries[j]
+            guard !entry.imageFileMissing else { continue }
+            let url = store.imageURL(for: entry)
+            prefetchTasks.append(Task {
+                await DetailImageService.shared.prefetch(
+                    url: url, maxPixel: pixels, nominalMax: pixels)
+            })
+        }
     }
 
     // MARK: - Open / switch flows

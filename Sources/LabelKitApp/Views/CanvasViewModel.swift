@@ -21,12 +21,24 @@ final class CanvasViewModel {
     private var lastDragLocation: CGPoint?
 
     let store: DatasetStore
-    let entry: ImageEntry
+    private(set) var entry: ImageEntry
 
     init(store: DatasetStore, entry: ImageEntry) {
         self.store = store
         self.entry = entry
         if let first = store.labels.ordered.first { drawLabel = first }
+    }
+
+    /// Re-point at a new image on navigation without recreating the view:
+    /// reset per-image editor state and re-fit. `drawLabel` persists (the
+    /// last-used label carries across images).
+    func bind(to entry: ImageEntry, viewport: CGSize) {
+        self.entry = entry
+        selectedBoxID = nil
+        rubberBand = nil
+        machine = EditorStateMachine()
+        lastDragLocation = nil
+        fit(in: viewport)
     }
 
     var imageSize: CGSize { entry.pixelSize ?? .zero }

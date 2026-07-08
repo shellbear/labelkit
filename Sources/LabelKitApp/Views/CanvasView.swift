@@ -21,6 +21,12 @@ struct CanvasView: View {
 
     @State private var viewModel: CanvasViewModel
     @State private var detailLoader = DetailImageLoader()
+    /// Sidebar thumbnail, shown blurred while the full-res decode is in
+    /// flight so fast navigation shows a soft preview instead of a spinner.
+    @State private var placeholder: CGImage?
+    /// Only true when this image was reached by a held-arrow scrub — a
+    /// discrete step skips the blur and shows the sharp image directly.
+    @State private var scrubbing = false
     @State private var showInspector = true
     @Environment(AppState.self) private var appState
     @Environment(\.undoManager) private var undoManager
@@ -34,7 +40,11 @@ struct CanvasView: View {
     var body: some View {
         GeometryReader { geometry in
             canvas(viewport: geometry.size)
-                .onAppear { open(viewport: geometry.size) }
+                .onAppear { load(viewport: geometry.size) }
+                // Navigation updates this same view in place (no `.id()` on the
+                // canvas), so the image swap is an onChange, not a full teardown
+                // and rebuild of the canvas + overlays + inspector per keystroke.
+                .onChange(of: entry.filename) { load(viewport: geometry.size) }
                 .onChange(of: appState.fitTrigger) {
                     viewModel.fit(in: geometry.size)
                 }
@@ -46,6 +56,14 @@ struct CanvasView: View {
                     detailLoader.ensure(displayedPixels)
                 }
                 .onDisappear { detailLoader.cancel() }
+                // Same maxPixel as the sidebar row, so a visible row's thumbnail
+                // is already cached and this is an instant hit; off-screen jumps
+                // fall back to a ~1 ms 80 px decode (vs the full image's 100+ ms).
+                .task(id: entry.filename) {
+                    guard !entry.imageFileMissing else { return }
+                    placeholder = await ThumbnailProvider.shared.thumbnail(
+                        for: store.imageURL(for: entry), maxPixel: 40 * Display.scale)
+                }
         }
         .background(.black.opacity(0.9))
         .inspector(isPresented: $showInspector) {
@@ -116,15 +134,31 @@ struct CanvasView: View {
 
     @ViewBuilder
     private var imageLayer: some View {
+        let size = viewModel.imageSize
+        let viewRect = viewModel.transform.toView(CGRect(origin: .zero, size: size))
+        // Blurred thumbnail underlay while scrubbing: an instant, recognizable
+        // stand-in during the debounced decode. Box overlays draw above this
+        // in view space, so they stay crisp over the blur. Each image carries
+        // its own exact frame (fills reliably); there is deliberately NO
+        // implicit animation here — an ambient one animated the frame's
+        // width/height when navigating to a differently-sized image.
+        if detailLoader.image == nil, scrubbing, let placeholder {
+            Image(decorative: placeholder, scale: 1)
+                .resizable()
+                .interpolation(.high)
+                .blur(radius: 6)
+                .frame(width: viewRect.width, height: viewRect.height)
+                .offset(x: viewRect.minX, y: viewRect.minY)
+                .clipped()
+        }
         if let image = detailLoader.image {
-            let size = viewModel.imageSize
-            let viewRect = viewModel.transform.toView(CGRect(origin: .zero, size: size))
             Image(decorative: image, scale: 1)
                 .resizable()
                 .interpolation(viewModel.transform.zoom > 4 ? .none : .high)
                 .frame(width: viewRect.width, height: viewRect.height)
                 .offset(x: viewRect.minX, y: viewRect.minY)
-        } else {
+        }
+        if detailLoader.image == nil, placeholder == nil {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -141,15 +175,26 @@ struct CanvasView: View {
         }
     }
 
-    private func open(viewport: CGSize) {
+    /// First appearance and every navigation: point the persistent view model
+    /// and loader at `entry`, drop the previous placeholder, and kick the
+    /// decode. Used by both `.onAppear` and `.onChange(of: entry.filename)`.
+    private func load(viewport: CGSize) {
+        placeholder = nil
         if entry.pixelSize == nil {
             entry.pixelSize = ImageMetadata.pixelSize(of: store.imageURL(for: entry))
         }
-        viewModel.fit(in: viewport)
+        viewModel.bind(to: entry, viewport: viewport)
+        // A held-arrow scrub shows the blur + debounces; a discrete step
+        // decodes immediately and goes straight to the sharp image.
+        scrubbing = appState.isRapidNavigation
+        // Report the fit resolution so AppState prefetches neighbours to match.
+        appState.detailDisplayPixels = displayedPixels
+        guard !entry.imageFileMissing else { detailLoader.cancel(); return }
         detailLoader.display(
             url: store.imageURL(for: entry),
             imageSize: viewModel.imageSize,
-            neededMaxPixel: displayedPixels
+            neededMaxPixel: displayedPixels,
+            immediate: !scrubbing
         )
     }
 }

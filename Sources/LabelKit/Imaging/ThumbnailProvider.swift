@@ -37,7 +37,7 @@ public actor ThumbnailProvider {
             defer { releaseSlot() }
             guard !Task.isCancelled else { return nil }
             let image = await Task.detached(priority: .utility) {
-                ImageDownsampler.decode(url: url, maxPixel: maxPixel)
+                ImageDownsampler.decode(url: url, maxPixel: maxPixel, preferEmbedded: true)
             }.value
             if let image {
                 self.store(image, for: url)

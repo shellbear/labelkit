@@ -32,7 +32,7 @@ public actor DetailImageService {
         }
     }
 
-    public init(byteBudget: Int = 96 << 20, maxConcurrentDecodes: Int = 2) {
+    public init(byteBudget: Int = 96 << 20, maxConcurrentDecodes: Int = 3) {
         cache.totalCostLimit = byteBudget
         self.maxConcurrentDecodes = maxConcurrentDecodes
     }
@@ -59,6 +59,32 @@ public actor DetailImageService {
         guard let decoded else { return nil }
         store(decoded, for: url)
         return decoded
+    }
+
+    /// A cached bitmap for `url` if one large enough already exists, without
+    /// ever decoding. Lets the loader show a revisited image instantly while
+    /// debouncing only the expensive cache-miss decodes.
+    public func cachedImage(url: URL, maxPixel: CGFloat, nominalMax: CGFloat) -> CGImage? {
+        cached(url: url, target: min(nominalMax, max(maxPixel, 64)), nominalMax: nominalMax)
+    }
+
+    /// Warm the cache for a soon-to-be-shown neighbor at low priority, so a
+    /// deliberate step lands on a hit instead of a cold decode. No-op if
+    /// already cached or if the surrounding task was cancelled (a reversed or
+    /// superseded navigation). Shares the decode gate but at `.utility`, so
+    /// the visible `.userInitiated` decode wins contention.
+    public func prefetch(url: URL, maxPixel: CGFloat, nominalMax: CGFloat) async {
+        let target = min(nominalMax, max(maxPixel, 64))
+        if cached(url: url, target: target, nominalMax: nominalMax) != nil { return }
+        if Task.isCancelled { return }
+        await acquireSlot()
+        defer { releaseSlot() }
+        if Task.isCancelled { return }
+        if cached(url: url, target: target, nominalMax: nominalMax) != nil { return }
+        let decoded = await Task.detached(priority: .utility) {
+            ImageDownsampler.decode(url: url, maxPixel: target)
+        }.value
+        if let decoded { store(decoded, for: url) }
     }
 
     private func cached(url: URL, target: CGFloat, nominalMax: CGFloat) -> CGImage? {
