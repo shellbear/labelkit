@@ -19,9 +19,7 @@ public enum DetectionMerge {
         nmsIoU: CGFloat = 0.45,
         dedupeIoU: CGFloat = 0.5
     ) -> [BoundingBox] {
-        let survivors = suppress(
-            candidates.filter { $0.confidence >= minConfidence },
-            iouThreshold: nmsIoU)
+        let survivors = detections(candidates, minConfidence: minConfidence, nmsIoU: nmsIoU)
 
         let existingByLabel = Dictionary(grouping: existing, by: \.label)
         return survivors.compactMap { candidate in
@@ -29,6 +27,18 @@ public enum DetectionMerge {
             let alreadyThere = peers.contains { iou($0.rect, candidate.box.rect) > dedupeIoU }
             return alreadyThere ? nil : candidate.box
         }
+    }
+
+    /// The detections for one image: confidence filter → per-label non-max
+    /// suppression, highest confidence first. This is the "what did the model
+    /// see" step, with no notion of an entry's existing boxes — the CLI reports
+    /// it directly, `newBoxes` layers additive de-duplication on top.
+    public static func detections(
+        _ candidates: [DetectionCandidate],
+        minConfidence: Float,
+        nmsIoU: CGFloat = 0.45
+    ) -> [DetectionCandidate] {
+        suppress(candidates.filter { $0.confidence >= minConfidence }, iouThreshold: nmsIoU)
     }
 
     /// Greedy per-label non-max suppression, highest confidence first. A model

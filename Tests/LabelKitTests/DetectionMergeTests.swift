@@ -51,6 +51,21 @@ final class DetectionMergeTests: XCTestCase {
         XCTAssertEqual(disjoint.count, 1)
     }
 
+    func testDetectionsAppliesConfidenceAndNMSSortedNoDedupe() {
+        // Two overlapping same-label boxes (NMS keeps the stronger) + one weak
+        // (dropped) + one different-label overlap (kept). No "existing" notion.
+        let out = DetectionMerge.detections(
+            [candidate(CGRect(x: 0, y: 0, width: 100, height: 100), "a", 0.9),
+             candidate(CGRect(x: 10, y: 10, width: 100, height: 100), "a", 0.7),
+             candidate(CGRect(x: 0, y: 0, width: 10, height: 10), "a", 0.3),
+             candidate(CGRect(x: 5, y: 5, width: 100, height: 100), "b", 0.8)],
+            minConfidence: 0.5)
+
+        // Highest confidence first, low-confidence 'a' and the suppressed 'a' gone.
+        XCTAssertEqual(out.map(\.confidence), [0.9, 0.8])
+        XCTAssertEqual(out.map(\.box.label), ["a", "b"])
+    }
+
     func testIoU() {
         let a = CGRect(x: 0, y: 0, width: 100, height: 100)
         XCTAssertEqual(DetectionMerge.iou(a, a), 1, accuracy: 1e-9)

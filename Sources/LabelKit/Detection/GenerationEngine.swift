@@ -90,24 +90,22 @@ public enum GenerationEngine {
         }
     }
 
-    /// Decode → detect → convert → merge for one image. Runs on a background
-    /// task; any failure (unreadable image, detector error) yields no boxes
-    /// rather than aborting the batch.
+    /// Detect for one image via the shared `SingleImageDetection` primitive,
+    /// then merge additively against what the entry already holds. Runs on a
+    /// background task; any failure (unreadable image, detector error) yields no
+    /// boxes rather than aborting the batch.
     private static func detect(job: GenerationJob, detector: BoxDetector,
                                settings: Settings) -> ImageResult {
         let empty = ImageResult(filename: job.filename, newBoxes: [])
         guard !Task.isCancelled,
-              let pixelSize = ImageMetadata.pixelSize(of: job.imageURL),
-              let cgImage = ImageDownsampler.decode(url: job.imageURL, maxPixel: settings.maxDecodePixel)
+              let result = try? SingleImageDetection.run(
+                  imageURL: job.imageURL, detector: detector,
+                  maxDecodePixel: settings.maxDecodePixel,
+                  fallbackLabel: settings.fallbackLabel)
         else { return empty }
 
-        let raw = (try? detector.detect(cgImage)) ?? []
-        let candidates = raw.compactMap {
-            DetectionGeometry.candidate(from: $0, pixelSize: pixelSize,
-                                        fallbackLabel: settings.fallbackLabel)
-        }
         let newBoxes = DetectionMerge.newBoxes(
-            candidates: candidates, existing: job.existingBoxes,
+            candidates: result.candidates, existing: job.existingBoxes,
             minConfidence: settings.minConfidence)
         return ImageResult(filename: job.filename, newBoxes: newBoxes)
     }

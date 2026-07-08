@@ -19,3 +19,11 @@ jobs:
       - run: swift test
       # Smoke: the CLI path must never touch AppKit (no window flash, clean exit).
       - run: .build/release/labelkit --version
+      # Smoke: `detect` runs headless end-to-end and emits valid schema JSON.
+      - name: Smoke-test `labelkit detect`
+        run: |
+          swift scripts/make-sample-dataset.swift 2 "$RUNNER_TEMP/lk-ci"
+          .build/release/labelkit detect "$RUNNER_TEMP/lk-ci" \
+            --detector rectangles --format json > "$RUNNER_TEMP/lk-out.json"
+          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d and d[0]['schemaVersion']==1, d" \
+            "$RUNNER_TEMP/lk-out.json"

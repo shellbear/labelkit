@@ -2,11 +2,27 @@ import ArgumentParser
 import Foundation
 import LabelKit
 
+/// Root command — a pure dispatcher. Bare `labelkit [dataset]` falls through to
+/// the default `open` subcommand (the GUI editor); `labelkit detect …` and any
+/// future headless verbs are siblings. The root itself declares no arguments so
+/// a subcommand token is never swallowed as a positional.
 struct LabelKitCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "labelkit",
         abstract: "Annotate image datasets in Apple Create ML object-detection format.",
-        version: labelkitVersion
+        version: labelkitVersion,
+        subcommands: [OpenCommand.self, DetectCommand.self],
+        defaultSubcommand: OpenCommand.self
+    )
+}
+
+/// `labelkit [dataset]` — open the editor. The default action, so the
+/// subcommand name is optional; `labelkit ~/data` and `labelkit open ~/data`
+/// are equivalent. This is the only path that touches AppKit.
+struct OpenCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "open",
+        abstract: "Open a dataset in the labelkit editor (default)."
     )
 
     @Argument(help: "Dataset directory, or path to an annotations .json file.")
