@@ -11,7 +11,8 @@ Pure SwiftPM: there is no `.xcodeproj`. `Package.swift` drives everything
 ## Build & test
 
 ```sh
-swift run labelkit <path>            # dev run
+swift run labelkit <path>            # dev run (GUI editor)
+swift run labelkit detect <img> --detector rectangles   # headless detect subcommand
 swift build -c release               # release binary at .build/release/labelkit
 swift test                           # headless library tests
 ./scripts/package-app.sh             # assemble labelkit.app next to the binary
@@ -46,9 +47,11 @@ New logic belongs in `LabelKit` with tests unless it genuinely needs UI.
 ### Launch rules (don't "modernize" these)
 
 - There is no `@main`: ArgumentParser and SwiftUI both claim it, so
-  `main.swift` calls `LabelKitCommand.main()`, and `run()` hands off to the
-  app only after arguments validate. CLI-only paths (`--version`, `--help`,
-  argument errors) must never initialize AppKit.
+  `main.swift` calls `LabelKitCommand.main()`. `LabelKitCommand` is a pure
+  dispatcher; its `open` subcommand is the default, and only `OpenCommand.run()`
+  hands off to the app (after arguments validate). Headless paths — `--version`,
+  `--help`, argument errors, and the entire `detect` subcommand — must never
+  initialize AppKit. CI smoke-tests both `--version` and `detect` to enforce it.
 - The app is a classic AppKit shell with an **imperatively created
   `NSWindow`** hosting SwiftUI (`LabelKitApp.swift`). SwiftUI's `WindowGroup`
   never creates its window while the app is inactive, and macOS 14+

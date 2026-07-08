@@ -62,6 +62,60 @@ labelkit <folder> --annotations other.json   # explicit annotations path
 labelkit <folder> --images '*.jpg'           # filter images by glob
 ```
 
+## Detecting from the CLI
+
+`labelkit detect` runs an object detector over an image (or a whole directory)
+and prints the boxes to stdout. It never opens the editor or touches the GUI —
+same rule as `--version` — so it's safe to pipe, redirect, and script.
+
+Pick exactly one detector: a custom Core ML model, or a built-in Apple Vision
+detector (`rectangles`, `faces`, `humans`, `animals`, `saliency`).
+
+```bash
+labelkit detect photo.jpg --model cards.mlpackage             # custom Core ML model
+labelkit detect photo.jpg --detector rectangles               # built-in Vision detector
+labelkit detect ./images  --detector faces --format ndjson    # a directory, one JSON line per image
+labelkit detect photo.jpg --model cards.mlpackage --render out.png   # also write an annotated PNG
+```
+
+Output is JSON by default (`--format json|ndjson|text`). Boxes are reported
+twice — in image pixels and normalized `[0,1]`, **both top-left origin** — so
+no consumer has to re-derive the coordinate convention:
+
+```json
+{
+  "schemaVersion": 1,
+  "detector": "Rectangles",
+  "source": "vision",
+  "image": "photo.jpg",
+  "width": 2048,
+  "height": 1536,
+  "detections": [
+    {
+      "label": "card",
+      "confidence": 0.9712,
+      "box": { "x": 326.39, "y": 490.28, "width": 247.78, "height": 427.68 },
+      "normalized": { "x": 0.15937, "y": 0.31919, "width": 0.121, "height": 0.27844 }
+    }
+  ]
+}
+```
+
+Common options:
+
+| Option | Meaning |
+|---|---|
+| `--model PATH` | custom Core ML model (`.mlmodel` / `.mlpackage` / `.mlmodelc`) |
+| `--detector NAME` | built-in Vision detector (see list above) |
+| `--format json\|ndjson\|text` | output shape (default `json`) |
+| `--render PATH` | also write an annotated PNG — a file for one image, a directory for many |
+| `--min-confidence 0–1` | drop detections scoring below this (default `0.5`) |
+| `--label NAME` | label for localize-only detectors (`rectangles`, `faces`, …) |
+| `--glob '*.jpg'` | which files a directory run picks up |
+| `--max-pixel N` | longest edge to decode to before detection (default `1536`) |
+
+Machine-readable output goes to stdout; progress and warnings go to stderr.
+
 ## Editing
 
 | Action | How |
@@ -119,7 +173,6 @@ Notes:
 
 ## Roadmap
 
-- Model-assisted drafts: drop an `.mlmodel` to pre-annotate
 - YOLO / COCO import & export (the format layer is already pluggable)
 
 ## License
