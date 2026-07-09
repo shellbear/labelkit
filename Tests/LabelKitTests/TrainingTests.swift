@@ -89,8 +89,10 @@ final class TrainingTests: XCTestCase {
             modelURL: output, metrics: TrainingMetrics(validationMeanAveragePrecision: 0.7))
         let recorder = StubTrainer.Recorder()
         let trainer = StubTrainer(recorder: recorder, script: .events([
-            .progress(fraction: 0.25, phase: "a"),
-            .progress(fraction: 0.75, phase: "b"),
+            .progress(TrainingProgress(fraction: 0.25, phase: .preparing, itemCount: 10,
+                                       totalItemCount: 40, elapsedTime: 1, loss: nil)),
+            .progress(TrainingProgress(fraction: 0.75, phase: .training, itemCount: 6,
+                                       totalItemCount: 10, elapsedTime: 3, loss: 0.4)),
             .finished(result),
         ]))
 
@@ -100,7 +102,7 @@ final class TrainingTests: XCTestCase {
             location: location, outputURL: output,
             options: TrainingOptions(algorithm: .fullNetwork, maxIterations: 50)) {
             switch event {
-            case let .progress(fraction, _): fractions.append(fraction)
+            case let .progress(snapshot): fractions.append(snapshot.fraction)
             case let .finished(result): finished = result
             }
         }
@@ -207,8 +209,10 @@ private struct StubTrainer: ObjectDetectorTrainer {
                     for index in 0..<Self.slowCount {
                         if Task.isCancelled { break }
                         recorder.yielded += 1
-                        continuation.yield(.progress(fraction: Double(index) / Double(Self.slowCount),
-                                                     phase: "step \(index)"))
+                        continuation.yield(.progress(TrainingProgress(
+                            fraction: Double(index) / Double(Self.slowCount),
+                            phase: .training, itemCount: index, totalItemCount: Self.slowCount,
+                            elapsedTime: 0, loss: nil)))
                         try? await Task.sleep(nanoseconds: 2_000_000)
                     }
                     continuation.finish()

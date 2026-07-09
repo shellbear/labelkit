@@ -105,13 +105,12 @@ struct TrainCommand: ParsableCommand {
             do {
                 for try await event in stream {
                     switch event {
-                    case let .progress(fraction, phase):
-                        let percent = Int((fraction * 100).rounded())
+                    case let .progress(snapshot):
+                        let percent = Int((snapshot.fraction * 100).rounded())
                         if !beQuiet, percent != lastPercent {
                             lastPercent = percent
-                            let suffix = phase.isEmpty ? "" : " (\(phase))"
                             FileHandle.standardError.write(
-                                Data("labelkit: training \(percent)%\(suffix)\n".utf8))
+                                Data("labelkit: \(Self.progressLine(snapshot, percent: percent))\n".utf8))
                         }
                     case let .finished(result):
                         box.value = .success(result)
@@ -134,6 +133,20 @@ struct TrainCommand: ParsableCommand {
 
     private final class ResultBox: @unchecked Sendable {
         var value: Result<TrainingResult, Error>?
+    }
+
+    private static func progressLine(_ p: TrainingProgress, percent: Int) -> String {
+        let phase: String
+        switch p.phase {
+        case .preparing: phase = "preparing images"
+        case .training: phase = "training"
+        case .evaluating: phase = "evaluating"
+        case .other: phase = "preparing"
+        }
+        var parts = ["\(phase) \(percent)%"]
+        if let total = p.totalItemCount { parts.append("\(p.itemCount)/\(total)") }
+        if let loss = p.loss { parts.append(String(format: "loss %.3f", loss)) }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: - Dataset

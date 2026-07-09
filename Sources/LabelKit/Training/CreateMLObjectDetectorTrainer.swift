@@ -90,12 +90,11 @@ private final class TrainingSession: @unchecked Sendable {
             }
             self.job = job
 
+            let startDate = job.startDate
             progressObservation = job.progress.observe(
                 \.fractionCompleted, options: [.initial, .new]
             ) { [weak self] progress, _ in
-                self?.continuation.yield(.progress(
-                    fraction: progress.fractionCompleted,
-                    phase: Self.phaseText(progress)))
+                self?.continuation.yield(.progress(Self.snapshot(progress, startDate: startDate)))
             }
 
             resultCancellable = job.result.sink(
@@ -150,9 +149,28 @@ private final class TrainingSession: @unchecked Sendable {
         job = nil
     }
 
-    private static func phaseText(_ progress: Progress) -> String {
-        guard progress.totalUnitCount > 0 else { return "" }
-        return "Iteration \(progress.completedUnitCount) of \(progress.totalUnitCount)"
+    /// Turn Create ML's `Foundation.Progress` into a rich snapshot. `MLProgress`
+    /// parses the progress's userInfo for the phase, per-phase item counts, live
+    /// metrics, and elapsed time; we fall back to the plain `Progress` fields if
+    /// that parse ever comes up empty.
+    private static func snapshot(_ progress: Progress, startDate: Date) -> TrainingProgress {
+        let ml = MLProgress(progress: progress)
+        let phase: TrainingPhase
+        switch ml?.phase {
+        case .extractingFeatures: phase = .preparing
+        case .training: phase = .training
+        case .evaluating: phase = .evaluating
+        default: phase = .other
+        }
+        let loss = (ml?.metrics[.loss] as? Double) ?? (ml?.metrics[.loss] as? NSNumber)?.doubleValue
+        let total = ml?.totalItemCount ?? (progress.totalUnitCount > 0 ? Int(progress.totalUnitCount) : nil)
+        return TrainingProgress(
+            fraction: progress.fractionCompleted,
+            phase: phase,
+            itemCount: ml?.itemCount ?? Int(progress.completedUnitCount),
+            totalItemCount: total,
+            elapsedTime: ml?.elapsedTime ?? Date().timeIntervalSince(startDate),
+            loss: loss)
     }
 
     private static func summarize(_ detector: MLObjectDetector, hasValidation: Bool) -> TrainingMetrics {

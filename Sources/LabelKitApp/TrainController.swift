@@ -20,8 +20,23 @@ final class TrainController {
     private(set) var isRunning = false
     /// Overall completion, `0…1`, for the sheet's progress bar.
     private(set) var progress = 0.0
-    /// Short phase label (e.g. "Iteration 12 of 100"); empty early on.
-    private(set) var phase = ""
+    /// Headline for the current phase, e.g. "Preparing images…", "Training…".
+    private(set) var statusTitle = ""
+    /// Within-phase detail, e.g. "37 of 92 images" or "Iteration 6 of 10".
+    private(set) var statusDetail = ""
+    /// Smoothed, rounded time-remaining phrase; empty until it's trustworthy.
+    private(set) var etaText = ""
+    /// Latest training loss, e.g. "loss 0.382"; empty until reported.
+    private(set) var lossText = ""
+
+    /// Exponential moving average of the raw ETA, to damp the jump at the
+    /// feature-extraction → training phase boundary.
+    private var etaEMA: Double?
+    /// When the current run started. The sheet renders a live
+    /// `Text(_:style: .timer)` from this, so the elapsed clock ticks every second
+    /// on its own — a manual ticker gets starved by Create ML's CPU load and only
+    /// updates when a progress callback frees the main actor (~every few seconds).
+    private(set) var runStart: Date?
     /// Set when a run finishes — drives the success view.
     private(set) var lastResult: TrainingResult?
     /// Set when a run fails — drives the error view.
@@ -47,8 +62,7 @@ final class TrainController {
         guard canTrain, !isRunning else { return }
         lastResult = nil
         lastError = nil
-        progress = 0
-        phase = ""
+        resetProgress()
         isSheetPresented = true
     }
 
@@ -74,9 +88,9 @@ final class TrainController {
         let options = self.options
         lastResult = nil
         lastError = nil
-        progress = 0
-        phase = ""
+        resetProgress()
         isRunning = true
+        runStart = Date()
 
         task = Task { [weak self] in
             guard let self else { return }
@@ -89,9 +103,8 @@ final class TrainController {
             do {
                 for try await event in stream {
                     switch event {
-                    case let .progress(fraction, phase):
-                        self.progress = fraction
-                        self.phase = phase
+                    case let .progress(snapshot):
+                        self.apply(snapshot)
                     case let .finished(result):
                         self.progress = 1
                         self.lastResult = result
@@ -115,6 +128,58 @@ final class TrainController {
     func revealModel() {
         guard let url = lastResult?.modelURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    // MARK: - Progress display
+
+    private func resetProgress() {
+        progress = 0
+        statusTitle = ""
+        statusDetail = ""
+        etaText = ""
+        lossText = ""
+        etaEMA = nil
+        runStart = nil
+    }
+
+    private func apply(_ snapshot: TrainingProgress) {
+        progress = snapshot.fraction
+        switch snapshot.phase {
+        case .preparing:
+            statusTitle = "Preparing images…"
+            statusDetail = snapshot.totalItemCount.map { "\(snapshot.itemCount) of \($0) images" } ?? ""
+        case .training:
+            statusTitle = "Training…"
+            statusDetail = snapshot.totalItemCount.map { "Iteration \(snapshot.itemCount) of \($0)" }
+                ?? "Iteration \(snapshot.itemCount)"
+        case .evaluating:
+            statusTitle = "Evaluating…"
+            statusDetail = ""
+        case .other:
+            // Object detection reports its initial decode/feature-extraction pass
+            // as the initialized phase rather than `.extractingFeatures`, so treat
+            // "other" during a run as preparation.
+            statusTitle = "Preparing…"
+            statusDetail = ""
+        }
+        // The elapsed clock is a live SwiftUI timer bound to `runStart`, not set
+        // here — these events arrive only every few iterations and would stutter.
+        etaText = estimateETA(fraction: snapshot.fraction, elapsed: snapshot.elapsedTime)
+        lossText = snapshot.loss.map { String(format: "loss %.3f", $0) } ?? ""
+    }
+
+    /// A rough "about … left" from overall fraction, EMA-smoothed and coarsely
+    /// rounded, shown only once there's enough signal to not be noise. Cross-phase
+    /// ETA is inherently approximate (feature extraction and training run at
+    /// different rates), so it's always phrased as an estimate.
+    private func estimateETA(fraction: Double, elapsed: TimeInterval) -> String {
+        guard fraction > 0.05, fraction < 0.999, elapsed > 3 else { return "" }
+        let raw = elapsed * (1 - fraction) / fraction
+        let smoothed = etaEMA.map { $0 * 0.7 + raw * 0.3 } ?? raw
+        etaEMA = smoothed
+        if smoothed < 10 { return "a few seconds left" }
+        if smoothed < 60 { return "about \(Int((smoothed / 5).rounded()) * 5)s left" }
+        return "about \(Int((smoothed / 60).rounded())) min left"
     }
 
     // MARK: - Completion

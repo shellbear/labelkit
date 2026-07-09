@@ -60,13 +60,48 @@ public struct TrainingResult: Sendable {
     }
 }
 
+/// The stage a training run is in — mirrors Create ML's `MLPhase` but keeps the
+/// framework type out of the library's public surface. `.preparing` is the long
+/// first pass that decodes every image and extracts features (Create ML's
+/// `extractingFeatures`); iterations only start once it reaches `.training`.
+public enum TrainingPhase: Sendable, Equatable {
+    case preparing
+    case training
+    case evaluating
+    case other
+}
+
+/// A snapshot of an in-flight run, rich enough for a phase-aware UI. `itemCount`
+/// / `totalItemCount` are *within the current phase* (images prepared while
+/// `.preparing`, iterations done while `.training`), so a caller can show
+/// "37 of 92 images" or "iteration 6 of 10" instead of a bare percentage.
+public struct TrainingProgress: Sendable, Equatable {
+    /// Overall completion `0…1` across the whole run (drives the bar).
+    public var fraction: Double
+    public var phase: TrainingPhase
+    public var itemCount: Int
+    public var totalItemCount: Int?
+    /// Wall-clock since the run began.
+    public var elapsedTime: TimeInterval
+    /// Latest training loss, when the framework reports one.
+    public var loss: Double?
+
+    public init(fraction: Double, phase: TrainingPhase, itemCount: Int,
+                totalItemCount: Int?, elapsedTime: TimeInterval, loss: Double?) {
+        self.fraction = fraction
+        self.phase = phase
+        self.itemCount = itemCount
+        self.totalItemCount = totalItemCount
+        self.elapsedTime = elapsedTime
+        self.loss = loss
+    }
+}
+
 /// Progress emitted while a run is in flight, ending with a single `.finished`.
 /// A run that fails throws through the stream instead (unlike a generation run,
 /// which silently yields nothing) — a bad dataset must surface.
 public enum TrainingEvent: Sendable {
-    /// `fraction` is overall completion `0…1`; `phase` is a short human label
-    /// (e.g. "Iteration 120 of 200"), possibly empty early on.
-    case progress(fraction: Double, phase: String)
+    case progress(TrainingProgress)
     /// Terminal event carrying the written model + its metrics.
     case finished(TrainingResult)
 }

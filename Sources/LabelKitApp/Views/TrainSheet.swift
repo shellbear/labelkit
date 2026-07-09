@@ -101,13 +101,33 @@ struct TrainSheet: View {
     }
 
     private func runningView(_ controller: TrainController) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Training…").font(.subheadline.weight(.semibold))
+        VStack(alignment: .leading, spacing: 10) {
+            Text(controller.statusTitle.isEmpty ? "Starting…" : controller.statusTitle)
+                .font(.subheadline.weight(.semibold))
             ProgressView(value: controller.progress)
-            Text(controller.phase.isEmpty ? "Preparing data…" : controller.phase)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+            if !controller.statusDetail.isEmpty {
+                Text(controller.statusDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            HStack(spacing: 6) {
+                if let start = controller.runStart {
+                    // A self-updating elapsed clock, driven by SwiftUI once a
+                    // second regardless of training load.
+                    Label { Text(start, style: .timer) } icon: { Image(systemName: "clock") }
+                }
+                if !controller.etaText.isEmpty {
+                    Text("· \(controller.etaText)")
+                }
+                Spacer()
+                if !controller.lossText.isEmpty {
+                    Text(controller.lossText)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
         }
     }
 
