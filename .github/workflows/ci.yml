@@ -37,3 +37,15 @@ jobs:
           else
             test $? -eq 64
           fi
+      # Smoke: `train` is wired and stays headless (no AppKit, and no CreateML
+      # training kicks off): help prints, and a dataset with no annotations
+      # validates and exits 64 before any training starts.
+      - name: Smoke-test `labelkit train` stays headless
+        run: |
+          .build/release/labelkit train --help >/dev/null
+          empty="$(mktemp -d)"
+          if .build/release/labelkit train "$empty"; then
+            echo "expected a usage error"; exit 1
+          else
+            test $? -eq 64
+          fi

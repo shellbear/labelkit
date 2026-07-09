@@ -21,6 +21,8 @@ struct GenerateControlView: View {
             Divider()
             Button("All Images (\(allCount))…") { controller.generate(scope: .wholeDataset) }
                 .disabled(allCount == 0)
+            Divider()
+            modelMenu
         } label: {
             Label("Generate", systemImage: "wand.and.stars")
         } primaryAction: {
@@ -30,6 +32,31 @@ struct GenerateControlView: View {
         .fixedSize()
         .disabled(appState.store == nil || controller.isRunning)
         .help("Generate boxes with \(controller.currentDetectorName) (⌘G)")
+    }
+
+    /// Detector picker as a submenu, so the model can be switched right where
+    /// generation is triggered (the same choice the Options popover and Detect ▸
+    /// Model menu drive). The inline Picker gives free checkmarks on the current
+    /// choice; "Choose Model…" adds a custom Core ML model.
+    private var modelMenu: some View {
+        Menu {
+            Picker("Model", selection: Binding(
+                get: { controller.choice },
+                set: { controller.select($0) })) {
+                ForEach(VisionBuiltinDetector.Kind.allCases, id: \.self) { kind in
+                    Text(VisionBuiltinDetector(kind).name).tag(DetectorChoice.builtin(kind))
+                }
+                ForEach(controller.recentModelURLs, id: \.self) { url in
+                    Text(url.deletingPathExtension().lastPathComponent)
+                        .tag(DetectorChoice.customModel(url))
+                }
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Button("Choose Model…") { controller.chooseCustomModel() }
+        } label: {
+            Label("Model: \(controller.currentDetectorName)", systemImage: "cpu")
+        }
     }
 }
 

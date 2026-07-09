@@ -21,10 +21,10 @@ func runLabelKitApp() -> Never {
 @MainActor private var appControllerStrongRef: AppController?
 
 @MainActor
-final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate,
-                           NSToolbarDelegate {
+final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     private var appState: AppState!
     private var generationController: GenerationController!
+    private var trainController: TrainController!
     private let windowUndoManager = UndoManager()
     private var window: NSWindow!
     private var openRecentMenu: NSMenu!
@@ -40,12 +40,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     func applicationDidFinishLaunching(_ notification: Notification) {
         appState = AppState(launch: LaunchContext.current)
         generationController = GenerationController(appState: appState, undoManager: windowUndoManager)
+        trainController = TrainController(appState: appState, generationController: generationController)
         buildMenu()
         buildWindow()
-
-        // Show/hide the Generate toolbar items to track whether a dataset is
-        // open (they don't belong on the empty home screen).
-        observeDatasetPresence()
 
         // Later launches of the CLI/app hand their dataset to this instance.
         DistributedNotificationCenter.default().addObserver(
@@ -110,12 +107,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         window.delegate = self
         window.setFrameAutosaveName("LabelKitMainWindow")
         // A hosted NavigationSplitView only gets the modern unified-titlebar
-        // chrome (tall bar, translucent full-height sidebar material) when
-        // the window carries a toolbar — even an empty one.
+        // chrome (tall bar, translucent full-height sidebar material) when the
+        // window carries a toolbar. The action items are declared in SwiftUI via
+        // `.toolbar` on the split view (RootView): that hosted NavigationSplitView
+        // owns this toolbar, so an AppKit NSToolbarDelegate on it would be ignored.
         let toolbar = NSToolbar(identifier: "labelkit.main")
         toolbar.displayMode = .iconAndLabel
         toolbar.showsBaselineSeparator = false
-        toolbar.delegate = self
         window.toolbar = toolbar
         window.toolbarStyle = .unified
         window.titlebarSeparatorStyle = .automatic
@@ -123,6 +121,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             rootView: RootView()
                 .environment(appState)
                 .environment(generationController)
+                .environment(trainController)
         )
         if window.frame.width < 900 { window.center() }
     }
@@ -203,6 +202,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         detectMenu.addItem(menuItem("Generate on Selected Images", "g", #selector(generateSelectedImages)))
         detectMenu.addItem(menuItem("Generate on New Images", "", #selector(generateNewImages)))
         detectMenu.addItem(menuItem("Generate on All Images…", "", #selector(generateAllImages)))
+        detectMenu.addItem(.separator())
+        detectMenu.addItem(menuItem("Train Model…", "", #selector(trainModel)))
         detectMenu.addItem(.separator())
         // Model ▸ — built-ins + recent custom models, rebuilt on open so the
         // checkmark tracks the current choice (like Open Recent).
@@ -288,6 +289,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         case #selector(generateSelectedImages), #selector(generateNewImages),
              #selector(generateAllImages):
             return appState.store != nil && !generationController.isRunning
+        case #selector(trainModel):
+            return appState.store != nil && !generationController.isRunning && !trainController.isRunning
         default:
             return true
         }
@@ -332,78 +335,5 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     @objc private func chooseModel() { generationController.chooseCustomModel() }
 
-    // MARK: - Toolbar
-
-    private var hasDataset: Bool { appState?.store != nil }
-
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        // The empty home screen keeps a bare toolbar (the unified titlebar chrome
-        // needs one) but no Generate controls — they only apply to an open
-        // dataset. syncGenerationToolbarItems() adds them the moment one opens.
-        hasDataset ? [.flexibleSpace, .generationOptions, .generate] : [.flexibleSpace]
-    }
-
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.generate, .generationOptions, .flexibleSpace, .space]
-    }
-
-    /// Watch `appState.store` and keep the toolbar's generation items in step —
-    /// `withObservationTracking` is one-shot, so re-arm on every change.
-    private func observeDatasetPresence() {
-        withObservationTracking {
-            _ = appState.store
-        } onChange: { [weak self] in
-            Task { @MainActor in
-                self?.syncGenerationToolbarItems()
-                self?.observeDatasetPresence()
-            }
-        }
-    }
-
-    /// Add the Generate/Options items once a dataset is open (remove them if we
-    /// ever fall back to the empty screen). Idempotent, so switching datasets is
-    /// a no-op.
-    private func syncGenerationToolbarItems() {
-        guard let toolbar = window?.toolbar else { return }
-        let shown = toolbar.items.contains { $0.itemIdentifier == .generate }
-        guard hasDataset != shown else { return }
-        if hasDataset {
-            toolbar.insertItem(withItemIdentifier: .generationOptions, at: toolbar.items.count)
-            toolbar.insertItem(withItemIdentifier: .generate, at: toolbar.items.count)
-        } else {
-            for index in toolbar.items.indices.reversed()
-            where toolbar.items[index].itemIdentifier == .generate
-                || toolbar.items[index].itemIdentifier == .generationOptions {
-                toolbar.removeItem(at: index)
-            }
-        }
-    }
-
-    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
-                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        switch identifier {
-        case .generate:
-            return hostedItem(identifier, label: "Generate",
-                              GenerateControlView(controller: generationController, appState: appState))
-        case .generationOptions:
-            return hostedItem(identifier, label: "Options",
-                              GenerationOptionsView(controller: generationController))
-        default:
-            return nil
-        }
-    }
-
-    private func hostedItem(_ identifier: NSToolbarItem.Identifier, label: String,
-                            _ view: some View) -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: identifier)
-        item.label = label
-        item.visibilityPriority = .high
-        item.view = NSHostingView(rootView: view)
-        return item
-    }
-}
-
-extension NSToolbarItem.Identifier {
-    static let generate = NSToolbarItem.Identifier("labelkit.generate")
-    static let generationOptions = NSToolbarItem.Identifier("labelkit.generationOptions")
+    @objc private func trainModel() { trainController.presentSheet() }
 }

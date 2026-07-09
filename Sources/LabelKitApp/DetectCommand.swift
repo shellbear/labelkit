@@ -255,4 +255,5 @@ private extension String {
 // `String`-backed `CaseIterable`, this one line yields parsing, `--help` value
 // listing ("rectangles, faces, …"), and shell completion — all sourced from the
 // same library enum the GUI's detector menu uses, so they can't drift apart.
-extension VisionBuiltinDetector.Kind: @retroactive ExpressibleByArgument {}
+// (No `@retroactive`: `Kind` is in the same package, so the conformance isn't retroactive.)
+extension VisionBuiltinDetector.Kind: ExpressibleByArgument {}

@@ -92,6 +92,16 @@ final class GenerationController {
         }
     }
 
+    /// Adopt a just-trained model as the active detector and remember it, so ⌘G
+    /// runs it immediately and it appears in the Model menu / options picker.
+    /// Bypasses `select`'s no-op guard on purpose: the file on disk just changed
+    /// (a retrain), so any cached detector for this path is stale.
+    func adoptTrainedModel(at url: URL) {
+        recentModels.record(url)
+        cachedDetector = nil
+        choice = .customModel(url)
+    }
+
     /// Human label for the current choice (toolbar / menu checkmarks).
     var currentDetectorName: String {
         switch choice {

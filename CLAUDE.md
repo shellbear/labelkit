@@ -13,6 +13,7 @@ Pure SwiftPM: there is no `.xcodeproj`. `Package.swift` drives everything
 ```sh
 swift run labelkit <path>            # dev run (GUI editor)
 swift run labelkit detect <img> --detector rectangles   # headless detect subcommand
+swift run labelkit train <dataset>   # headless train subcommand (Create ML → .mlmodel)
 swift build -c release               # release binary at .build/release/labelkit
 swift test                           # headless library tests
 ./scripts/package-app.sh             # assemble labelkit.app next to the binary
@@ -26,15 +27,17 @@ For scale/perf testing, generate a realistic dataset instead of hand-rolling
 one: `swift scripts/make-sample-dataset.swift 10000 /tmp/labelkit-sample` draws
 a few dozen distinct camera-resolution JPEGs (real decode cost) and fans out to
 N via symlinks (tiny on disk). See the `swift-perf-profiling` skill in
-`.claude/skills/` for the headless xctrace capture/analyze workflow.
+`.claude/skills/` for the headless xctrace capture/analyze workflow. (Those
+symlinked images are fine for the editor and `detect`, but Create ML *training*
+reads real files only — dereference first, e.g. `cp -L`, before `labelkit train`.)
 
 CI (`.github/workflows/ci.yml`) builds on macOS 14 and 15 and runs the test
 suite on macOS 15 — `swift test` SIGSEGVs on the macOS 14 runner image (an
 unsymbolicated crash that reproduces on neither macOS 15 nor locally), so
 macOS 14 stays a build-only guard for the minimum deployment target. It then
-smoke-runs `.build/release/labelkit --version` and `labelkit detect --help` —
-those invocations must exit cleanly without ever touching AppKit (no window
-flash).
+smoke-runs `.build/release/labelkit --version`, `labelkit detect --help`, and
+`labelkit train --help` — those invocations must exit cleanly without ever
+touching AppKit (no window flash) or kicking off Create ML.
 
 ## Architecture: two targets, hard boundary
 
@@ -64,7 +67,11 @@ New logic belongs in `LabelKit` with tests unless it genuinely needs UI.
   SwiftUI `App`/`WindowGroup` lifecycle.
 - The window carries an empty `NSToolbar` on purpose: a hosted
   `NavigationSplitView` only gets the unified-titlebar chrome when the window
-  has a toolbar.
+  has a toolbar. The toolbar **items** are declared in SwiftUI with `.toolbar`
+  on the split view (`RootView`), *not* via an AppKit `NSToolbarDelegate`: the
+  hosted `NavigationSplitView` owns that toolbar (it injects the sidebar
+  toggle), so delegate-provided items are silently ignored. Don't reintroduce a
+  toolbar delegate — add controls to the `.toolbar` block instead.
 - Later CLI invocations hand their dataset to the running instance via
   `DistributedNotificationCenter` (see `SingleInstance.swift`) instead of
   spawning a second app.

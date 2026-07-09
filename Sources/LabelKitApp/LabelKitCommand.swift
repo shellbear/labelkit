@@ -11,7 +11,7 @@ struct LabelKitCommand: ParsableCommand {
         commandName: "labelkit",
         abstract: "Annotate image datasets in Apple Create ML object-detection format.",
         version: labelkitVersion,
-        subcommands: [OpenCommand.self, DetectCommand.self],
+        subcommands: [OpenCommand.self, DetectCommand.self, TrainCommand.self],
         defaultSubcommand: OpenCommand.self
     )
 }

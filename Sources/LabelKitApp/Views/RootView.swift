@@ -4,11 +4,14 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppState.self) private var appState
+    @Environment(GenerationController.self) private var generationController
+    @Environment(TrainController.self) private var trainController
     /// Highlights the whole window while an image/folder drag hovers it.
     @State private var isDropTargeted = false
 
     var body: some View {
         @Bindable var appState = appState
+        @Bindable var trainController = trainController
         Group {
             if let store = appState.store {
                 NavigationSplitView {
@@ -25,6 +28,18 @@ struct RootView: View {
                 }
                 .onAppear { syncWindowChrome(store) }
                 .onChange(of: store.isDirty) { syncWindowChrome(store) }
+                // The window's toolbar is owned by this hosted NavigationSplitView
+                // (it injects the sidebar toggle), so the action controls must be
+                // declared here with SwiftUI's `.toolbar` — an AppKit NSToolbar
+                // delegate on the same window is ignored. Present only in this
+                // branch, so they vanish on the empty home screen for free.
+                .toolbar {
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        TrainControlView(controller: trainController, appState: appState)
+                        GenerationOptionsView(controller: generationController)
+                        GenerateControlView(controller: generationController, appState: appState)
+                    }
+                }
             } else {
                 emptyState
             }
@@ -50,6 +65,10 @@ struct RootView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(appState.loadError ?? "")
+        }
+        .sheet(isPresented: $trainController.isSheetPresented) {
+            TrainSheet()
+                .environment(trainController)
         }
     }
 
