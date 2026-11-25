@@ -31,10 +31,10 @@ N via symlinks (tiny on disk). See the `swift-perf-profiling` skill in
 symlinked images are fine for the editor and `detect`, but Create ML *training*
 reads real files only — dereference first, e.g. `cp -L`, before `labelkit train`.)
 
-CI (`.github/workflows/ci.yml`) builds on macOS 14 and 15 and runs the test
-suite on macOS 15 — `swift test` SIGSEGVs on the macOS 14 runner image (an
-unsymbolicated crash that reproduces on neither macOS 15 nor locally), so
-macOS 14 stays a build-only guard for the minimum deployment target. It then
+CI (`.github/workflows/ci.yml`) builds and runs the test suite on macOS 15
+and 26. GitHub retired the macOS 14 runner image on 2026-11-02, so the macOS 14
+minimum deployment target is guarded only at compile time, by the SDK's
+availability checks against `Package.swift`'s `.macOS(.v14)`. It then
 smoke-runs `.build/release/labelkit --version`, `labelkit detect --help`, and
 `labelkit train --help` — those invocations must exit cleanly without ever
 touching AppKit (no window flash) or kicking off Create ML.

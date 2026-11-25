@@ -9,7 +9,10 @@ jobs:
     strategy:
       fail-fast: false      # one runner's result shouldn't cancel the other
       matrix:
-        os: [macos-14, macos-15]
+        # GitHub retired the macos-14 image on 2026-11-02. The macOS 14 minimum
+        # deployment target (Package targets .macOS(.v14)) is still enforced at
+        # compile time by the SDK's availability checks on any newer runner.
+        os: [macos-15, macos-26]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -17,13 +20,7 @@ jobs:
         with:
           xcode-version: latest-stable
       - run: swift build -c release
-      # `swift test` reliably SIGSEGVs on the macOS 14 runner image — an
-      # unsymbolicated crash that reproduces on neither macOS 15 nor locally,
-      # so it's a runner/toolchain issue, not ours. Keep macOS 14 as a build
-      # guard for the minimum deployment target (Package targets .macOS(.v14))
-      # and run the suite on macOS 15.
-      - if: matrix.os != 'macos-14'
-        run: swift test
+      - run: swift test
       # Smoke: the CLI path must never touch AppKit (no window flash, clean exit).
       - run: .build/release/labelkit --version
       # Smoke: `detect` is wired and stays headless (no AppKit, no Vision here):
