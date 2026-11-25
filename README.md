@@ -10,6 +10,10 @@ A native macOS bounding-box annotator for **Apple Create ML object-detection
 datasets** — launched from the terminal, no project files, no accounts, no
 format conversion.
 
+![labelkit demo: label 19 photos by hand, train a Create ML object detector, then let it label new photos](docs/demo.gif)
+
+<sub>Label, train, auto-label — 38 seconds. Demo photos from Wikimedia Commons, CC BY / CC BY-SA: [credits](docs/demo-credits.md).</sub>
+
 ```
 labelkit path/to/dataset
 ```
