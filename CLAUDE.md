@@ -102,7 +102,14 @@ version. `scripts/package-app.sh` extracts it with a grep for a quoted
 numeric literal, so keep the exact shape
 `public let labelkitVersion = "X.Y.Z"`.
 
-Releasing = bump that file, commit, tag `vX.Y.Z`, push the tag.
+`CHANGELOG.md` (Keep a Changelog format) is the single source of release
+notes: user-facing changes go under `## [Unreleased]` as they land.
+
+Releasing = bump that file, rename `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
+(add a fresh empty `[Unreleased]` and update the compare links at the bottom),
+commit, tag `vX.Y.Z`, push the tag.
 `.github/workflows/release.yml` then builds universal + per-arch artifacts
-and publishes the GitHub release; the Homebrew tap
+and publishes the GitHub release, using that changelog section as the notes
+(`scripts/release-notes.sh` extracts it and fails the release if the section is
+missing); the Homebrew tap
 (`shellbear/tap/labelkit`) serves the thin slices via `on_arm`/`on_intel`.

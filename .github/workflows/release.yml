@@ -18,6 +18,9 @@ jobs:
         with:
           path: .build
           key: spm-release-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+      # Fail before the build if CHANGELOG.md has no section for this tag.
+      - name: Extract release notes from CHANGELOG.md
+        run: ./scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/release-notes.md"
       - run: swift test
       - name: Build universal binary + app bundle
         run: ./scripts/package-app.sh --universal
@@ -50,4 +53,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             .build/release/labelkit-*.tar.gz \
             .build/release/checksums.txt \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
             --generate-notes
