@@ -107,9 +107,16 @@ notes: user-facing changes go under `## [Unreleased]` as they land.
 
 Releasing = bump that file, rename `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
 (add a fresh empty `[Unreleased]` and update the compare links at the bottom),
-commit, tag `vX.Y.Z`, push the tag.
-`.github/workflows/release.yml` then builds universal + per-arch artifacts
-and publishes the GitHub release, using that changelog section as the notes
-(`scripts/release-notes.sh` extracts it and fails the release if the section is
-missing); the Homebrew tap
-(`shellbear/tap/labelkit`) serves the thin slices via `on_arm`/`on_intel`.
+commit, then run `make release` (`scripts/release.sh`). It checks the tree and
+the changelog, creates and pushes the `vX.Y.Z` tag, waits for
+`.github/workflows/release.yml` to build the universal + per-arch artifacts and
+publish the GitHub release (the changelog section becomes the notes;
+`scripts/release-notes.sh` extracts it and fails the release if the section is
+missing), then runs `scripts/update-tap.sh` to point the Homebrew tap
+(`shellbear/tap/labelkit`, thin slices via `on_arm`/`on_intel`) at the new
+version and checksums.
+
+**A release is not done until the tap is updated.** CI cannot push to the tap
+repo, so that step runs locally with your own git/gh credentials. If the tag
+was pushed some other way, run `./scripts/update-tap.sh` once the Release
+workflow is green (`--dry-run` shows the formula diff first).

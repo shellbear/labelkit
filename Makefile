@@ -3,7 +3,7 @@
 PREFIX ?= $(shell brew --prefix 2>/dev/null || echo /usr/local)
 BINDIR  = $(PREFIX)/bin
 
-.PHONY: build test app universal install uninstall clean
+.PHONY: build test app universal install uninstall release clean
 
 build:
 	swift build -c release
@@ -30,6 +30,11 @@ install: app
 uninstall:
 	rm -f "$(BINDIR)/labelkit"
 	rm -rf "$(BINDIR)/labelkit.app"
+
+# Tag + push the version in Version.swift, wait for CI to publish the GitHub
+# release, then update the Homebrew tap. Bump the version and CHANGELOG first.
+release:
+	./scripts/release.sh
 
 clean:
 	swift package clean
