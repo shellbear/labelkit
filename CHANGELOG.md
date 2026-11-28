@@ -9,6 +9,8 @@ release notes, so every release needs a `## [X.Y.Z] - YYYY-MM-DD` heading here.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-28
+
 ### Added
 
 - **App icon.** labelkit now has its own icon in the Dock, Finder and the app
@@ -86,7 +88,8 @@ release notes, so every release needs a `## [X.Y.Z] - YYYY-MM-DD` heading here.
 - Universal builds, GitHub releases on tag push, and a Homebrew formula
   (`shellbear/tap/labelkit`).
 
-[Unreleased]: https://github.com/shellbear/labelkit/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/shellbear/labelkit/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/shellbear/labelkit/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/shellbear/labelkit/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/shellbear/labelkit/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/shellbear/labelkit/releases/tag/v0.1.0
