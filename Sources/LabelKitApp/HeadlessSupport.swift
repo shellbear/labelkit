@@ -8,26 +8,39 @@ import LabelKit
 ///
 /// - stdout carries the result and nothing else; notes go to stderr.
 /// - Exit 0 on success, 1 when the command ran but found or hit a problem
-///   (the JSON on stdout says what), 64 for a usage error.
+///   (stdout, or failing that stderr, says what), 64 for a usage error.
 /// - Never touches AppKit.
 enum Headless {
     enum OutputFormat: String, ExpressibleByArgument, CaseIterable {
         case json, text
     }
 
-    /// Open a dataset for scripted work, turning "not a dataset" into a usage
-    /// error (exit 64) rather than a crash-style failure.
-    static func openDocument(path: String, annotations: String?,
-                             onlyImages: [String]? = nil) throws -> DatasetDocument {
+    /// Find the dataset a path names. A path that isn't a dataset is a usage
+    /// error (exit 64).
+    static func locate(path: String, annotations: String?) throws -> DatasetLocation {
         do {
             guard let location = try DatasetLocator.resolve(path: path, annotationsOverride: annotations) else {
                 throw ValidationError("Specify a dataset directory or an annotations .json file.")
             }
-            return try DatasetDocument(location: location, onlyImages: onlyImages)
+            return location
         } catch let error as ValidationError {
             throw error
         } catch {
             throw ValidationError(describe(error))
+        }
+    }
+
+    /// Open a dataset for scripted work. An annotations file that exists but
+    /// can't be read is a problem with the dataset, not with the call: a note
+    /// on stderr and exit 1.
+    static func openDocument(path: String, annotations: String?,
+                             onlyImages: [String]? = nil) throws -> DatasetDocument {
+        let location = try locate(path: path, annotations: annotations)
+        do {
+            return try DatasetDocument(location: location, onlyImages: onlyImages)
+        } catch {
+            note("can't read \(location.annotationsURL.path): \(describe(error))")
+            throw ExitCode(1)
         }
     }
 

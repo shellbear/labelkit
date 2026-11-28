@@ -131,8 +131,9 @@ By default a box is `x, y, width, height` in **pixels of the image file, with
 ```
 
 Input can be one such object, a JSON array of them, or NDJSON, from a file
-(`--from boxes.json`) or stdin (`--from -`). With `--image a.jpg` the input is
-just that image's boxes. A Markdown code fence around the JSON is ignored, so a
+(`--from boxes.json`) or stdin (`--from -`; stdin is never read unless you ask
+for it this way). With `--image a.jpg` the input is just that image's boxes, as
+a list or a single box. A Markdown code fence around the JSON is ignored, so a
 model's raw answer can be piped straight in.
 
 You rarely need to convert anything. Shapes that describe themselves are read
@@ -168,13 +169,20 @@ treated as a public interface.
 - **stdout is the result, and only the result.** JSON by default
   (`--format text` for people). Notes and progress go to stderr.
 - **Exit codes:** `0` success · `1` the command ran and found or hit a problem
-  (the JSON says what) · `64` usage error.
+  (the JSON says what; if the input itself was unreadable, stderr does) · `64`
+  usage error.
 - **Reports are versioned.** Each carries `schemaVersion`; fields may be added,
   but an existing field changing meaning bumps the version.
 - **Writes are all-or-nothing.** If any input can't be applied — an image that
   isn't in the dataset, a box outside its image — `annotate` writes nothing and
   exits `1`. `--lenient` applies the valid part. `--dry-run` writes nothing
   either way.
+- **"No boxes" changes nothing unless you say so.** An image given with an
+  empty box list is left untouched in both modes, so piping a detector through
+  `annotate` can't create negatives or wipe labels where it found nothing.
+  `--negatives` makes it count (and with `--mode replace`, clears the image).
+- **Source images are never written.** `render` refuses an `--out` that is the
+  dataset folder.
 - **The file stays yours.** `annotate` writes through the same code as the
   editor: entry order, unknown keys, negative examples and the file's own
   indentation are preserved, and coordinates are saved to 2 decimals. `git diff`
@@ -212,6 +220,7 @@ refused, each with its `image` and a `message`.
 | Code | Severity | Meaning |
 |---|---|---|
 | `no-annotations-file` | error | the dataset has no annotations file |
+| `invalid-annotations-file` | error | the annotations file can't be read as Create ML JSON |
 | `missing-image` | error | an entry's image file isn't in the folder |
 | `duplicate-entry` | error | one image has two entries (only the first is used) |
 | `empty-label` | error | a box has no label |

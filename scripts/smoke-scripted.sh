@@ -54,6 +54,47 @@ expect 1 "$lk" annotate "$ds" --image missing.png --box 'thing:1,1,5,5'
 expect 1 "$lk" annotate "$ds" --image a.png --box 'thing:9000,9000,5,5'
 cmp -s "$ds/annotations.json" "$work/before-bad.json" || fail "a refused annotate changed the file"
 
+# stdin belongs to the caller: without --from it is left alone, so a loop
+# feeding image names is not swallowed by the first command.
+count=0
+while read -r name; do
+    expect 0 "$lk" annotate "$ds" --image "$name" --negatives --dry-run
+    count=$((count + 1))
+done < <(printf 'a.png\nb.png\n')
+[[ "$count" -eq 2 ]] || fail "annotate consumed the loop's stdin (ran $count of 2)"
+
+# "No boxes" is a no-op unless --negatives says otherwise, even with replace.
+echo '{"image": "a.png", "boxes": []}' | "$lk" annotate "$ds" --from - --mode replace >/dev/null
+cmp -s "$ds/annotations.json" "$work/before-bad.json" || fail "an empty box list wiped an image without --negatives"
+
+# A name is only accepted spelled as it is on disk, and only for images.
+expect 1 "$lk" annotate "$ds" --image A.PNG --box 'thing:1,1,5,5'
+expect 1 "$lk" annotate "$ds" --image annotations.json --box 'thing:1,1,5,5'
+expect 1 "$lk" annotate "$ds" --image a.png --box 'thing:10,10,-50,-40'
+cmp -s "$ds/annotations.json" "$work/before-bad.json" || fail "a refused annotate changed the file"
+
+# Rendering into the dataset folder would overwrite the images: refused.
+cp "$ds/a.png" "$work/a-original.png"
+expect 64 "$lk" render "$ds" --out "$ds"
+expect 64 "$lk" render "$ds" --out "$ds/../dataset/"
+cmp -s "$ds/a.png" "$work/a-original.png" || fail "render touched a source image"
+
+# An annotations file that isn't Create ML JSON is a dataset problem (1), not a
+# usage error, and validate still reports it as JSON.
+broken="$work/broken"
+mkdir "$broken"
+cp docs/icon.png "$broken/a.png"
+echo '{"not": "an array"}' > "$broken/annotations.json"
+expect 1 "$lk" stats "$broken"
+expect 1 "$lk" validate "$broken"
+report="$("$lk" validate "$broken" 2>/dev/null || true)"
+grep -q '"invalid-annotations-file"' <<<"$report" \
+    || fail "validate should report an unreadable annotations file as an issue"
+expect 1 "$lk" annotate "$ds" --from "$broken/annotations.json"
+
+# Piping boxes in without --from - would silently do nothing; it is refused.
+expect 64 "$lk" annotate "$ds" --image a.png
+
 # Usage errors are 64, before anything is read.
 expect 64 "$lk" annotate "$ds" --box 'thing:1,1,5,5'
 expect 64 "$lk" annotate "$ds" --image a.png --origin bottom-left --box 'thing:1,1,5,5'

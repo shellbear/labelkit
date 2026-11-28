@@ -19,7 +19,8 @@ changes.
   below is headless.
 - **stdout is the result (JSON), stderr is notes.** Parse stdout.
 - **Exit codes:** `0` ok · `1` the command ran and found or hit a problem
-  (stdout says what) · `64` you called it wrong (read stderr, fix the call).
+  (stdout says what, or stderr if there is no report) · `64` you called it
+  wrong (read stderr, fix the call).
 - **Coordinates are pixels of the image file, top-left origin, with `x`,`y`
   at the box's top-left corner**, unless you state another convention with
   flags. (On disk Create ML stores box centres; labelkit converts.)
@@ -34,7 +35,8 @@ changes.
    `labelkit render <dataset> --unlabeled --grid 100 --limit 10 --out <dir>`
    writes downscaled copies with a labelled line every 100 pixels of the
    *original* image. Open them. The JSON gives each image's real `width`
-   and `height`.
+   and `height`. `--out` is a scratch directory, never the dataset folder
+   (labelkit refuses that).
 3. **Write boxes.**
    `labelkit annotate <dataset> --image a.jpg --box 'cat:40,30,200,160' --box 'dog:300,90,120,210'`
    or many images at once with `--from boxes.json` (shapes below).
@@ -82,8 +84,9 @@ labelkit annotate <dataset> --image a.jpg --box 'cat:40,30,200,160'
 labelkit annotate <dataset> --image a.jpg -l card --box 40,30,200,160 --box 300,90,120,210
 ```
 
-From a file or stdin (`--from -`), for any number of images. JSON, a JSON
-array, or NDJSON; a Markdown code fence around it is fine:
+From a file or stdin, for any number of images. stdin is read only with
+`--from -`. JSON, a JSON array, or NDJSON; a Markdown code fence around it
+is fine:
 
 ```json
 {"image": "a.jpg", "boxes": [
@@ -91,8 +94,9 @@ array, or NDJSON; a Markdown code fence around it is fine:
 ]}
 ```
 
-With `--image a.jpg --from answer.json` the file is just that image's boxes,
-so a vision model's raw answer can be passed straight through.
+With `--image a.jpg --from answer.json` the file is just that image's boxes
+(a list of them, or a single box object), so a vision model's raw answer can
+be passed straight through.
 
 Shapes that describe themselves need no flags:
 
@@ -126,13 +130,16 @@ Behaviour worth knowing:
   changes nothing, so retrying is always safe.
 - **`--mode replace`** gives each listed image exactly the boxes supplied.
   Other images are untouched. Use it to correct an image.
-- **`--negatives`** records an image supplied with no boxes as a negative
-  example (an object-free image is real training signal). Without it, "no
-  boxes" writes nothing: `--image empty.jpg --negatives`.
+- **An image given with no boxes is left untouched**, in either mode, so a
+  detector that found nothing can never wipe existing labels. `--negatives`
+  makes it count: `--image empty.jpg --negatives` records an object-free
+  image as a negative example (real training signal), and
+  `--image a.jpg --mode replace --negatives` clears an image's boxes.
 - **`--dry-run`** reports what would change without writing.
 - If any input is unusable (unknown image, box outside the image), nothing
   is written and the exit code is `1`. `--lenient` applies the rest.
-- Boxes hanging over an edge are trimmed and counted as `clamped`.
+- Boxes hanging over an edge are trimmed and counted as `clamped`. A box
+  smaller than one pixel, or with a negative width or height, is refused.
 
 ## Letting a detector do the first pass
 
@@ -150,9 +157,9 @@ render and review them like any other boxes.
 
 `labelkit validate <dataset>` reports, as JSON `issues` with a stable `code`:
 
-- **errors** (exit 1): `no-annotations-file`, `missing-image`,
-  `duplicate-entry`, `empty-label`, `empty-box`, `box-outside-image`,
-  `unknown-label` (with `--labels`).
+- **errors** (exit 1): `no-annotations-file`, `invalid-annotations-file`,
+  `missing-image`, `duplicate-entry`, `empty-label`, `empty-box`,
+  `box-outside-image`, `unknown-label` (with `--labels`).
 - **warnings** (exit 0, or 1 with `--strict`): `box-overflows-image`,
   `duplicate-box`, `duplicate-image` (the same photo under two names),
   `unreadable-image`, `unused-label`.

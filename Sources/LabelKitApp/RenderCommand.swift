@@ -41,7 +41,7 @@ struct RenderCommand: ParsableCommand {
     @Argument(help: "Image filenames to render. Default: every image with an entry.")
     var images: [String] = []
 
-    @Option(name: [.customShort("o"), .long], help: "Directory to write the rendered images into (created if needed).")
+    @Option(name: [.customShort("o"), .long], help: "Directory to write the rendered images into (created if needed). Not the dataset folder itself.")
     var out: String
 
     @Option(name: .long, help: "Explicit annotations.json path (overrides auto-detection).")
@@ -112,6 +112,10 @@ struct RenderCommand: ParsableCommand {
         if let limit { targets = Array(targets.prefix(max(0, limit))) }
 
         let outURL = URL(fileURLWithPath: (out as NSString).expandingTildeInPath)
+        guard !document.isImagesDirectory(outURL) else {
+            throw ValidationError(
+                "--out is the dataset's own folder; rendering there would overwrite its images. Choose another directory.")
+        }
         do {
             try FileManager.default.createDirectory(at: outURL, withIntermediateDirectories: true)
         } catch {

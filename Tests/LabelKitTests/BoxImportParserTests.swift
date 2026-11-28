@@ -88,6 +88,24 @@ final class BoxImportParserTests: XCTestCase {
         assertNormalized(parsed[1].geometry, 0, 0, 1, 1)
     }
 
+    func testCodeFenceOnOneLineAndWithoutAnInfoString() throws {
+        let oneLine = try boxes("```json [{\"box_2d\": [100, 200, 500, 400], \"label\": \"cat\"}] ```")
+        assertNormalized(oneLine[0].geometry, 0.2, 0.1, 0.2, 0.4)
+        let bare = try boxes("```\n[{\"label\": \"cat\", \"xyxy\": [1, 2, 3, 4]}]\n```")
+        XCTAssertEqual(bare[0].geometry, .pixels(CGRect(x: 1, y: 2, width: 2, height: 2)))
+        // Text that merely contains one fence is left as it is.
+        XCTAssertEqual(BoxImportParser.stripCodeFence("a ``` b"), "a ``` b")
+        XCTAssertEqual(BoxImportParser.stripCodeFence("no fence"), "no fence")
+    }
+
+    /// The simplest thing a model can answer for one image: one box.
+    func testASingleBoxObjectForANamedImage() throws {
+        let parsed = try boxes(#"{"label": "cat", "xyxy": [40, 30, 240, 190]}"#)
+        XCTAssertEqual(parsed, [ImportedBox(label: "cat", geometry: .pixels(CGRect(x: 40, y: 30, width: 200, height: 160)))])
+        // Without a named image the same object has no image to go to.
+        XCTAssertThrowsError(try parse(#"{"label": "cat", "xyxy": [40, 30, 240, 190]}"#))
+    }
+
     func testGeminiBox2DKeepsItsMeaningWhateverTheFlagsSay() throws {
         let parsed = try boxes(#"[{"box_2d":[100,200,500,400],"label":"cat"}]"#,
                                .init(units: .pixel, anchor: .center, order: .xyxy))

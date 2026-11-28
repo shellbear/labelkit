@@ -13,7 +13,8 @@ struct AnnotateCommand: ParsableCommand {
         discussion: """
         Give boxes one of two ways:
 
-          --from FILE   JSON, a JSON array, or NDJSON; '-' reads stdin. Each entry
+          --from FILE   JSON, a JSON array, or NDJSON; '-' reads stdin (stdin is
+                        never read unless you ask for it this way). Each entry
                         names an image and lists its boxes:
                           {"image": "a.jpg", "boxes": [
                             {"label": "cat", "x": 40, "y": 30, "width": 200, "height": 160}]}
@@ -54,6 +55,11 @@ struct AnnotateCommand: ParsableCommand {
         is already there (same label, overlapping), so running the same input
         twice changes nothing. replace gives the listed images exactly the boxes
         supplied and leaves every other image alone.
+
+        An image given with NO boxes is left untouched in both modes, so a
+        detector that found nothing can't create negatives or wipe labels by
+        accident. --negatives makes it count: the image is recorded as a
+        negative example, and with --mode replace its existing boxes are cleared.
 
         If any input can't be applied (unknown image, a box outside its image),
         nothing is written and the command exits 1; --lenient applies the rest.
@@ -100,7 +106,7 @@ struct AnnotateCommand: ParsableCommand {
     @Option(name: .long, help: "add: keep existing boxes, skip duplicates. replace: listed images get exactly these boxes.")
     var mode: AnnotationMerge.Mode = .add
 
-    @Flag(name: .long, help: "Record an image given with no boxes as a negative example.")
+    @Flag(name: .long, help: "Act on an image given with no boxes: record it as a negative example (with --mode replace, clearing its boxes).")
     var negatives = false
 
     @Flag(name: .long, help: "Report what would change without writing the file.")
@@ -118,6 +124,12 @@ struct AnnotateCommand: ParsableCommand {
         }
         if !box.isEmpty, from != nil {
             throw ValidationError("Use either --from or --box, not both.")
+        }
+        // An image with no boxes and no --negatives changes nothing. Saying so
+        // beats exiting 0 — most often the boxes were piped in without --from -.
+        if let image, from == nil, box.isEmpty, !negatives {
+            throw ValidationError("No boxes given for \(image). Pass --box, read them with --from <file> "
+                + "(--from - for stdin), or add --negatives to record an image that has none.")
         }
         if let imageSize, BoxImportParser.parseSize(imageSize) == nil {
             throw ValidationError("--image-size must look like 1568x1176.")
@@ -179,9 +191,13 @@ struct AnnotateCommand: ParsableCommand {
     // MARK: - Input
 
     private func readImports() throws -> [ImportedImage] {
-        // --image with --box flags (or with nothing piped in: an explicit
-        // "this image has no boxes") is complete on its own.
-        if let image, from == nil, !box.isEmpty || isatty(FileHandle.standardInput.fileDescriptor) != 0 {
+        // Without --from, the boxes are the --box flags and nothing else.
+        // stdin is read only when asked for: a command that drained it
+        // unprompted would swallow the input of a surrounding `while read` loop.
+        guard let from else {
+            guard let image else {
+                throw ValidationError("Give boxes with --from <file> (--from - for stdin), or --image with --box.")
+            }
             do {
                 let boxes = try box.map { try BoxImportParser.parseInlineBox($0, options: parserOptions) }
                 return [ImportedImage(image: image, boxes: boxes)]
@@ -191,30 +207,24 @@ struct AnnotateCommand: ParsableCommand {
         }
 
         let data: Data
-        switch from {
-        case "-"?:
+        if from == "-" {
             data = FileHandle.standardInput.readDataToEndOfFile()
-        case let file?:
-            let url = URL(fileURLWithPath: (file as NSString).expandingTildeInPath)
+        } else {
+            let url = URL(fileURLWithPath: (from as NSString).expandingTildeInPath)
             guard let contents = try? Data(contentsOf: url) else {
-                throw ValidationError("Couldn't read \(file).")
+                throw ValidationError("Couldn't read \(from).")
             }
             data = contents
-        case nil:
-            // No --from: take piped input, but never block waiting on a terminal.
-            guard isatty(FileHandle.standardInput.fileDescriptor) == 0 else {
-                throw ValidationError("Give boxes with --from <file> (or '-' for stdin), or --image with --box.")
-            }
-            data = FileHandle.standardInput.readDataToEndOfFile()
         }
         do {
             let parsed = try BoxImportParser.parse(data, options: parserOptions)
-            // Naming an image and supplying nothing still means "this image,
-            // no boxes" (agents rarely have a terminal on stdin).
+            // A named image with empty input still means "this image, no boxes".
             if parsed.isEmpty, let image { return [ImportedImage(image: image, boxes: [])] }
             return parsed
         } catch {
-            throw ValidationError("Couldn't read the boxes: \(Headless.describe(error))")
+            // The call was fine; what it was given was not.
+            Headless.note("couldn't read the boxes: \(Headless.describe(error))")
+            throw ExitCode(1)
         }
     }
 

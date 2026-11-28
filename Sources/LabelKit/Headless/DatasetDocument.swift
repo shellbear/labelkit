@@ -36,12 +36,7 @@ public struct DatasetDocument: Sendable {
             indentUnit = CreateMLWriter.defaultIndentUnit
         }
         if let onlyImages, onlyImages.count <= Self.listingThreshold {
-            let directory = location.imagesDirectory.path
-            // Only files directly in the folder count, as with a listing: a
-            // name with a path in it must not reach outside the dataset.
-            imagesOnDisk = onlyImages.uniqued().filter {
-                !$0.contains("/") && FileManager.default.fileExists(atPath: directory + "/" + $0)
-            }
+            imagesOnDisk = onlyImages.uniqued().filter { Self.isListedImage($0, in: location.imagesDirectory) }
         } else {
             imagesOnDisk = ImageDirectoryScanner.scan(directory: location.imagesDirectory, glob: imageGlob)
         }
@@ -49,6 +44,33 @@ public struct DatasetDocument: Sendable {
 
     /// Up to this many images, checking each beats listing a large directory.
     static let listingThreshold = 256
+
+    /// Whether a directory listing would include `name` — answered for one
+    /// file without listing. The checks mirror `ImageDirectoryScanner`: an
+    /// image extension, directly in the folder, not hidden, and spelled exactly
+    /// as stored (the file system matches `A.JPG` to `a.jpg`; a listing never
+    /// would, and two spellings of one image must not become two entries).
+    static func isListedImage(_ name: String, in directory: URL) -> Bool {
+        guard !name.contains("/"),
+              ImageDirectoryScanner.imageExtensions.contains((name as NSString).pathExtension.lowercased()),
+              let values = try? URL(fileURLWithPath: directory.path + "/" + name)
+                  .resourceValues(forKeys: [.nameKey, .isHiddenKey])
+        else { return false }
+        return values.name == name && values.isHidden != true
+    }
+
+    /// True when `url` is this dataset's images folder, however it is spelled
+    /// (symlinks, case, trailing slash). Output must never be written there:
+    /// a rendered `a.jpg` would replace the source `a.jpg`.
+    public func isImagesDirectory(_ url: URL) -> Bool {
+        func identity(_ url: URL) -> (any NSCopying & NSSecureCoding & NSObjectProtocol)? {
+            (try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.fileResourceIdentifierKey]))?
+                .fileResourceIdentifier
+        }
+        if let a = identity(url), let b = identity(location.imagesDirectory) { return a.isEqual(b) }
+        return url.resolvingSymlinksInPath().standardizedFileURL.path
+            == location.imagesDirectory.resolvingSymlinksInPath().standardizedFileURL.path
+    }
 
     /// For tests and callers that already hold the pieces.
     public init(location: DatasetLocation, records: [ImageAnnotationRecord],
