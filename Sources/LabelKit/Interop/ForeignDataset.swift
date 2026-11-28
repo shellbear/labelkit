@@ -199,8 +199,10 @@ public enum ForeignDatasetReader {
                     throw ForeignDatasetError(message: "\(here): expected a JSON object with \"file_name\"")
                 }
                 let boxes = try huggingFaceBoxes(row["objects"], names: names, at: here)
-                let source = directory.appendingPathComponent(fileName).standardizedFileURL
-                if FileManager.default.fileExists(atPath: source.path) {
+                // The row is untrusted input: only an image that the listing of
+                // this dataset found is accepted, so a `file_name` such as
+                // `../../x.png` can't pull a file in from outside it.
+                if let source = files.listedImage(at: directory.appendingPathComponent(fileName)) {
                     result.images.append(.init(source: source, boxes: boxes))
                 } else {
                     result.missingImages.append(fileName)
@@ -343,6 +345,14 @@ struct Tree {
     }
 
     private static func key(_ folder: String, _ stem: String) -> String { folder + "\u{0}" + stem }
+
+    /// The image at `url`, if it is one of the image files found under `root`.
+    /// A path that leads anywhere else — outside the dataset, or to a file
+    /// that isn't an image — is nil.
+    func listedImage(at url: URL) -> URL? {
+        let path = url.standardizedFileURL.path
+        return imagesByName[url.lastPathComponent]?.first { $0.path == path }
+    }
 
     func named(_ name: String) -> [URL] {
         all.filter { $0.lastPathComponent == name }

@@ -276,6 +276,31 @@ final class DatasetInteropTests: XCTestCase {
         XCTAssertEqual(foreign.missingImages, ["gone.png"])
     }
 
+    /// A downloaded dataset is untrusted: a row must not be able to name a file
+    /// outside it (or a non-image inside it) and have it copied into yours.
+    func testHuggingFaceRowsCannotReachOutsideTheDataset() throws {
+        let hf = root.appendingPathComponent("hf-evil")
+        try image("ok.png", 50, 50, in: hf.appendingPathComponent("train"))
+        try image("secret.png", 50, 50, in: root.appendingPathComponent("elsewhere"))
+        try write("secret", to: hf.appendingPathComponent("train/notes.txt"))
+        let outside = root.appendingPathComponent("elsewhere/secret.png").path
+        try write([
+            #"{"file_name": "ok.png", "objects": {"bbox": [], "categories": []}}"#,
+            #"{"file_name": "../../elsewhere/secret.png", "objects": {"bbox": [], "categories": []}}"#,
+            "{\"file_name\": \"\(outside)\", \"objects\": {\"bbox\": [], \"categories\": []}}",
+            #"{"file_name": "notes.txt", "objects": {"bbox": [], "categories": []}}"#,
+        ].joined(separator: "\n") + "\n", to: hf.appendingPathComponent("train/metadata.jsonl"))
+
+        let foreign = try ForeignDatasetReader.read(at: hf)
+        XCTAssertEqual(foreign.images.map(\.source.lastPathComponent), ["ok.png"])
+        XCTAssertEqual(foreign.missingImages.count, 3)
+
+        let target = root.appendingPathComponent("safe")
+        try importing(hf, into: target)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: target.path).sorted(),
+                       ["annotations.json", "ok.png"])
+    }
+
     func testCOCOFileFindsItsImagesInASiblingFolder() throws {
         let coco = root.appendingPathComponent("coco-in")
         try image("p.png", 100, 100, in: coco.appendingPathComponent("train2017"))
