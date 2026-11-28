@@ -18,7 +18,15 @@ swift build -c release               # release binary at .build/release/labelkit
 swift test                           # headless library tests
 ./scripts/package-app.sh             # assemble labelkit.app next to the binary
 ./scripts/package-app.sh --universal # arm64+x86_64 fat build (used by release CI)
+./scripts/make-icon.sh               # recompile the app icon after editing its source
 ```
+
+The app icon's source of truth is `Resources/AppIcon.icon`, an Icon Composer
+document (SVG layers + `icon.json`). Its compiled forms — `Resources/Assets.car`,
+`Resources/AppIcon.icns` and the README's `docs/icon.png` — are **committed**:
+`package-app.sh` only copies them, so packaging and the release CI never need an
+Xcode that understands `.icon` files. After changing the icon, run
+`make-icon.sh` (Xcode 26+) and commit the regenerated files with it.
 
 The `Makefile` wraps these (`make build/test/app/universal/install`);
 `make install` puts the CLI + app bundle into the Homebrew prefix's `bin`.

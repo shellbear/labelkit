@@ -19,8 +19,12 @@ APP=.build/release/labelkit.app
 VERSION=$(grep -o '"[0-9.]*"' Sources/LabelKit/Version.swift | tr -d '"')
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/labelkit"
+# The icon is precompiled and committed (scripts/make-icon.sh), so packaging
+# only copies it. Assets.car carries the Liquid Glass icon macOS 26+ looks up
+# by CFBundleIconName; AppIcon.icns is what macOS 14–15 read via CFBundleIconFile.
+cp Resources/Assets.car Resources/AppIcon.icns "$APP/Contents/Resources/"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -30,6 +34,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>dev.shellbear.labelkit</string>
     <key>CFBundleName</key><string>LabelKit</string>
     <key>CFBundleDisplayName</key><string>LabelKit</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleIconName</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key><string>${VERSION}</string>

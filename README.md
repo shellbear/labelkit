@@ -1,4 +1,7 @@
-# labelkit
+<h1 align="center">
+  <img src="docs/icon.png" width="128" height="128" alt="labelkit app icon: a bounding box with round corner handles, on an orange-to-red gradient"><br>
+  labelkit
+</h1>
 
 [![Latest release](https://img.shields.io/github/v/release/shellbear/labelkit?sort=semver&color=blue)](https://github.com/shellbear/labelkit/releases/latest)
 [![CI](https://github.com/shellbear/labelkit/actions/workflows/ci.yml/badge.svg)](https://github.com/shellbear/labelkit/actions/workflows/ci.yml)

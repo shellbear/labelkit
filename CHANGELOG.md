@@ -9,6 +9,13 @@ release notes, so every release needs a `## [X.Y.Z] - YYYY-MM-DD` heading here.
 
 ## [Unreleased]
 
+### Added
+
+- **App icon.** labelkit now has its own icon in the Dock, Finder and the app
+  switcher: a bounding box with round corner handles on an orange-to-red
+  gradient. It is a layered Liquid Glass icon on macOS 26 and later (with dark,
+  clear and tinted appearances) and a classic icon on macOS 14 and 15.
+
 ## [0.2.0] - 2026-11-25
 
 ### Added
