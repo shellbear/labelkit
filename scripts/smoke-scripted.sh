@@ -28,7 +28,7 @@ expect() {
     [[ "$got" -eq "$want" ]] || fail "expected exit $want, got $got: $*"
 }
 
-for command in stats validate annotate render skill; do
+for command in stats validate annotate render import export skill; do
     expect 0 "$lk" "$command" --help
 done
 
@@ -107,6 +107,23 @@ expect 64 "$lk" stats "$work/no-such-dataset"
 # Render writes one picture per image.
 expect 0 "$lk" render "$ds" --grid 100 --out "$work/out"
 [[ -s "$work/out/a.jpg" && -s "$work/out/b.jpg" ]] || fail "render didn't write both pictures"
+
+# Export to each format and import it back: same images, same boxes, and a
+# second import that changes nothing.
+for format in yolo coco huggingface; do
+    expect 0 "$lk" export "$ds" --format "$format" --out "$work/out-$format"
+    expect 0 "$lk" import "$work/out-$format" --into "$work/back-$format"
+    cp "$work/back-$format/annotations.json" "$work/back-$format.json"
+    expect 0 "$lk" import "$work/out-$format" --into "$work/back-$format"
+    cmp -s "$work/back-$format/annotations.json" "$work/back-$format.json" \
+        || fail "a repeated $format import changed the file"
+    "$lk" stats "$work/back-$format" | grep -q '"annotated" : 2' || fail "$format round trip lost images"
+    expect 0 "$lk" validate "$work/back-$format" --labels thing --strict
+done
+expect 64 "$lk" export "$ds" --format yolo --out "$work/out-yolo"     # not empty
+expect 64 "$lk" export "$ds" --format yolo --out "$ds"                 # the dataset itself
+expect 64 "$lk" import "$work/no-such-source" --into "$work/x"
+[[ ! -e "$work/x" ]] || fail "a refused import created its target"
 
 # The skill prints, matches the committed copy, and installs.
 "$lk" skill | cmp -s - skills/labelkit/SKILL.md || fail "labelkit skill differs from skills/labelkit/SKILL.md"

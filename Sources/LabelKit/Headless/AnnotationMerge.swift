@@ -30,11 +30,18 @@ public enum AnnotationMerge {
         /// modes, so that "the detector found nothing" never silently becomes
         /// training signal or wipes existing labels.
         public var recordNegatives: Bool
+        /// In `add` mode, also treat two overlapping same-label boxes within
+        /// the input as one. Right for a model's answer, where that is a
+        /// repeated detection; wrong for an existing dataset, where crowded
+        /// objects legitimately overlap, so `import` turns it off.
+        public var dedupeWithinInput: Bool
 
-        public init(mode: Mode = .add, dedupeIoU: CGFloat = 0.5, recordNegatives: Bool = false) {
+        public init(mode: Mode = .add, dedupeIoU: CGFloat = 0.5, recordNegatives: Bool = false,
+                    dedupeWithinInput: Bool = true) {
             self.mode = mode
             self.dedupeIoU = dedupeIoU
             self.recordNegatives = recordNegatives
+            self.dedupeWithinInput = dedupeWithinInput
         }
     }
 
@@ -125,8 +132,10 @@ public enum AnnotationMerge {
             var added = 0, duplicates = 0, removed = 0
             switch options.mode {
             case .add:
+                let alreadyThere = boxes
                 for candidate in resolved {
-                    if boxes.contains(where: { isSameBox($0, candidate, threshold: options.dedupeIoU) }) {
+                    let known = options.dedupeWithinInput ? boxes : alreadyThere
+                    if known.contains(where: { isSameBox($0, candidate, threshold: options.dedupeIoU) }) {
                         duplicates += 1
                     } else {
                         boxes.append(candidate)
@@ -186,6 +195,16 @@ public enum AnnotationMerge {
                 return .failure(BoxImportError(
                     message: "coordinates measured on a \(Int(reference.width))x\(Int(reference.height)) copy "
                         + "need the image's own size, and the file can't be read"))
+            }
+            // A size that is the image's own turned on its side means the
+            // numbers were measured before the photo's EXIF rotation. Which way
+            // it was turned isn't known here, so scaling would place the box
+            // somewhere wrong without saying so.
+            if imageSize != reference, reference.width == imageSize.height, reference.height == imageSize.width {
+                return .failure(BoxImportError(
+                    message: "coordinates are for the image before its EXIF rotation "
+                        + "(\(Int(reference.width))x\(Int(reference.height)) stored, "
+                        + "\(Int(imageSize.width))x\(Int(imageSize.height)) as displayed)"))
             }
             // Same size (the usual case, e.g. `labelkit detect` output): the
             // numbers are used as they are, with no float round trip.

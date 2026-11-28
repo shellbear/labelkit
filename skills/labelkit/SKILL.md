@@ -153,6 +153,22 @@ labelkit detect <dataset> --detector rectangles -l card --format ndjson | labelk
 including one trained earlier on this dataset. Detections are a draft:
 render and review them like any other boxes.
 
+## Datasets from and for other tools
+
+```
+labelkit import ./downloaded --into <dataset>            # YOLO, COCO or Hugging Face layout, detected
+labelkit export <dataset> --format yolo --out ./for-yolo  # or coco, huggingface
+```
+
+`import` copies the source's images into the dataset and merges its boxes.
+It never overwrites a file (a clashing name is renamed and reported),
+repeating it changes nothing, and source images without boxes are skipped
+unless `--negatives` is given. If labels come in as `class_0`, `class_1`, …
+the source has no class names: pass its `data.yaml` or a one-name-per-line
+file with `--names`. `export` writes a new folder and only reads
+the dataset; `--out` must be new or empty. Use `--dry-run` on `import` first
+when unsure what a folder contains.
+
 ## Checking a dataset
 
 `labelkit validate <dataset>` reports, as JSON `issues` with a stable `code`:
@@ -202,6 +218,8 @@ were unsure about.
 | `labelkit annotate <dataset> …` | adds or replaces boxes | `annotations.json` |
 | `labelkit render <dataset> [images…] --out DIR [--grid N] [--unlabeled]` | pictures with boxes drawn | files in DIR |
 | `labelkit detect <image-or-dir> --model M \| --detector D` | runs a detector, prints boxes | nothing |
+| `labelkit import <source> --into <dataset>` | brings in a YOLO, COCO or Hugging Face dataset | images and `annotations.json` |
+| `labelkit export <dataset> --format F --out DIR` | writes the dataset as YOLO, COCO or Hugging Face | files in DIR |
 | `labelkit train <dataset> [-o model.mlmodel]` | trains a Core ML detector | the model file |
 
 Every command has `--help` with examples. `stats`, `validate` and `annotate`

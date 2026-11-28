@@ -46,8 +46,12 @@ public enum ImageImporter {
     /// `reservedNames` are filenames already claimed by the dataset's entries
     /// (including ghost entries whose file is missing) — merged with the
     /// directory's actual contents so nothing on disk is clobbered either.
+    ///
+    /// `names` gives each source the filename it should take, when that isn't
+    /// the last component of its URL — a file reached through a symlink keeps
+    /// the link's name, not the name of whatever it pointed to.
     public static func plan(sources: [URL], into directory: URL,
-                            reservedNames: Set<String>) -> [Item] {
+                            reservedNames: Set<String>, names: [String]? = nil) -> [Item] {
         let fm = FileManager.default
         var claimed = reservedNames
         if let onDisk = try? fm.contentsOfDirectory(atPath: directory.path) {
@@ -55,8 +59,8 @@ public enum ImageImporter {
         }
 
         var items: [Item] = []
-        for source in sources {
-            let name = source.lastPathComponent
+        for (index, source) in sources.enumerated() {
+            let name = names?[index] ?? source.lastPathComponent
             let destination = directory.appendingPathComponent(name)
             // Same name + same byte size already there → treat as the same
             // image: no copy, just surface it (parent-folder case, re-drag).
