@@ -21,6 +21,8 @@ swift run labelkit stats <dataset>   # headless: what is labelled, what is not (
 swift run labelkit validate <dataset>  # headless: dataset problems, exit 1 on errors
 swift run labelkit annotate <dataset> --image a.jpg --box 'cat:40,30,200,160'  # headless: write boxes
 swift run labelkit render <dataset> --out /tmp/check   # headless: draw the boxes to look at them
+swift run labelkit import <source> --into <dataset>           # headless: bring in a YOLO / COCO / Hugging Face dataset
+swift run labelkit export <dataset> --format yolo --out <dir>  # headless: write it out in another layout
 swift run labelkit skill             # print the guide for AI agents (SKILL.md)
 swift build -c release               # release binary at .build/release/labelkit
 swift test                           # headless library tests
@@ -72,12 +74,15 @@ New logic belongs in `LabelKit` with tests unless it genuinely needs UI.
 
 ### The scripted surface (agents and scripts depend on it)
 
-`stats`, `validate`, `annotate`, `render` and `skill` are the headless verbs
-AI agents and shell scripts drive. Their logic is in
+`stats`, `validate`, `annotate`, `render`, `import`, `export` and `skill` are
+the headless verbs AI agents and shell scripts drive. Their logic is in
 `Sources/LabelKit/Headless` (`DatasetDocument`, `BoxImportParser`,
 `AnnotationMerge`, `DatasetSummary`, `DatasetValidator`, `DuplicateImages`,
-`AgentGuide`); each command file in `LabelKitApp` only parses arguments and
-prints. Treat the following as a public interface:
+`AgentGuide`) and `Sources/LabelKit/Interop` (`ForeignDatasetReader`,
+`DatasetImport`, `DatasetExport`); each command file in `LabelKitApp` only
+parses arguments and prints. `import` is deliberately built from `ImageImporter`
+and `AnnotationMerge` rather than beside them, so it inherits never-overwrite,
+idempotency and all-or-nothing; keep it that way when adding a format. Treat the following as a public interface:
 
 - **stdout is the result and nothing else** (JSON by default); notes go to
   stderr via `Headless.note`. **Exit 0** success, **1** the command ran and

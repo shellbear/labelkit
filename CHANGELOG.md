@@ -9,6 +9,23 @@ release notes, so every release needs a `## [X.Y.Z] - YYYY-MM-DD` heading here.
 
 ## [Unreleased]
 
+### Added
+
+- **`labelkit import`.** Bring a YOLO, COCO or Hugging Face image dataset into
+  a Create ML dataset: images are copied in and boxes merged into
+  `annotations.json`. The format is detected, existing files are never
+  overwritten (a clashing name is renamed and its boxes follow), importing the
+  same source twice changes nothing, and a source with unusable boxes imports
+  nothing unless `--lenient` is given. `--names` supplies class names for a
+  source that only has numeric ids.
+- **`labelkit export`.** Write a dataset out as YOLO (`images/`, `labels/`,
+  `data.yaml`), COCO (`_annotations.coco.json`) or a Hugging Face image dataset
+  (`metadata.jsonl` plus a dataset card), ready for `hf upload`.
+- **[docs/datasets.md](docs/datasets.md).** Recipes for publishing on Hugging
+  Face, keeping images in an R2/S3 bucket with only `annotations.json` in git,
+  and using a large model as a teacher to label data for a small Create ML
+  model.
+
 ## [0.3.0] - 2026-11-28
 
 ### Added

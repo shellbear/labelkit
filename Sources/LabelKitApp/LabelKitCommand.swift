@@ -14,7 +14,7 @@ struct LabelKitCommand: ParsableCommand {
         subcommands: [
             OpenCommand.self, DetectCommand.self, TrainCommand.self,
             StatsCommand.self, ValidateCommand.self, AnnotateCommand.self, RenderCommand.self,
-            SkillCommand.self,
+            ImportCommand.self, ExportCommand.self, SkillCommand.self,
         ],
         defaultSubcommand: OpenCommand.self
     )

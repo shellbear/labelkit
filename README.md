@@ -106,6 +106,8 @@ labelkit render <folder> …     # draw the boxes onto pictures to check them
 labelkit validate <folder>     # find problems; exits 1 on errors
 labelkit detect <image> …      # run a detector
 labelkit train <folder>        # train a Core ML model
+labelkit import <source> --into <folder>      # bring in a YOLO, COCO or Hugging Face dataset
+labelkit export <folder> --format yolo --out <dir>   # …or write one out
 ```
 
 ## Using it from an AI agent
@@ -152,6 +154,40 @@ Stdout is JSON, stderr is notes, and exit codes are `0` ok, `1` problem found,
 `64` usage error. No server and no MCP setup are involved.
 
 **[Full guide: per-client setup, input formats, the JSON contract →](docs/agents.md)**
+
+## Working with other tools and formats
+
+A labelkit dataset is Apple's Create ML format and nothing more, so it moves
+between tools with two commands:
+
+```bash
+labelkit import ./yolo-or-coco-download --into ./cards     # format detected; never overwrites; safe to repeat
+labelkit export ./cards --format huggingface --out ./cards-hf
+```
+
+To see it on a real dataset in a minute, try COCO8, an 8-image sample of COCO
+that Ultralytics publishes in YOLO format:
+
+```bash
+curl -LO https://github.com/ultralytics/assets/releases/download/v0.0.0/coco8.zip && unzip -q coco8.zip
+curl -LO https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/cfg/datasets/coco8.yaml
+labelkit import coco8 --into coco8-ml --names coco8.yaml    # 8 images, 30 boxes, 12 classes
+labelkit coco8-ml                                           # open it in the editor
+```
+
+(The zip carries no class names of its own, hence `--names`; without it the
+boxes import as `class_0`, `class_1`, ….)
+
+`import` and `export` cover **YOLO**, **COCO** and **Hugging Face** image
+datasets. That gives you a few useful routes:
+
+- **Start from a public dataset** instead of from nothing.
+- **Publish or back up on Hugging Face**, public or private, with their `hf` tool.
+- **Keep images in your own bucket** (R2, B2, S3) and only `annotations.json` in git.
+- **Use a big model as a teacher**: let a YOLO or vision-language model label
+  your images, review, then train a small on-device model with `labelkit train`.
+
+**[Recipes for each of these →](docs/datasets.md)**
 
 ## Detecting from the CLI
 
@@ -264,8 +300,9 @@ Notes:
 
 ## Roadmap
 
-- YOLO import and YOLO / COCO export (COCO import already works through
-  `labelkit annotate --from`)
+- A checksum manifest, so a dataset whose images live in a bucket can be
+  verified after download
+- The editor noticing when `annotations.json` changes underneath it
 
 ## License
 

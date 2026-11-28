@@ -16,7 +16,7 @@ public struct DatasetDocument: Sendable {
     /// Entries in file order. Never reordered or dropped by a load → save.
     public var records: [ImageAnnotationRecord]
     /// Image filenames found in the images directory, name-sorted.
-    public let imagesOnDisk: [String]
+    public var imagesOnDisk: [String]
     /// Indentation sniffed from the loaded file, reused on save.
     public let indentUnit: String
 
