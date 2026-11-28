@@ -94,7 +94,64 @@ labelkit <labels.json>         # a Create ML JSON; images resolved next to it
 labelkit                       # open panel
 labelkit <folder> --annotations other.json   # explicit annotations path
 labelkit <folder> --images '*.jpg'           # filter images by glob
+labelkit <folder> --select IMG_0412.jpg      # open on that image (reloads if already open)
 ```
+
+The same binary also works without the editor, for scripts and AI agents:
+
+```bash
+labelkit stats <folder>        # what is labelled and what isn't
+labelkit annotate <folder> …   # write boxes
+labelkit render <folder> …     # draw the boxes onto pictures to check them
+labelkit validate <folder>     # find problems; exits 1 on errors
+labelkit detect <image> …      # run a detector
+labelkit train <folder>        # train a Core ML model
+```
+
+## Using it from an AI agent
+
+labelkit can be driven end to end from the terminal, so a coding agent can
+label a dataset, check its own work, and hand it to you for review.
+
+```bash
+labelkit skill --install
+```
+
+That one command teaches Claude Code, Codex, opencode, Cursor, Gemini CLI,
+GitHub Copilot, Amp, Goose and other clients how to use labelkit: it installs a
+small [Agent Skill](https://agentskills.io) where each of them looks for one.
+For an agent without skills, `labelkit skill --snippet >> AGENTS.md` adds a few
+lines instead. Then just ask:
+
+> Label the photos in `./cards` for object detection, one box per card.
+
+What the agent runs is the same loop you could run by hand:
+
+```bash
+labelkit stats ./cards                                           # what's left to do
+labelkit render ./cards --unlabeled --grid 100 --out /tmp/todo   # pictures with a pixel ruler
+labelkit annotate ./cards --image IMG_0412.jpg --box 'card:412,230,318,455'
+labelkit render ./cards IMG_0412.jpg --out /tmp/check            # look at the result
+labelkit validate ./cards                                        # anything wrong?
+labelkit ./cards --select IMG_0412.jpg                           # show you that image in the editor
+```
+
+- **Boxes go in the way your model gives them.** Gemini's `box_2d`, corner
+  lists, 0–1 or 0–1000 coordinates, YOLO-style centres, COCO files and
+  `labelkit detect` output are all accepted; you name the convention instead of
+  converting numbers.
+- **Safe to retry.** Running the same `annotate` twice changes nothing, and a
+  run with any bad input writes nothing at all.
+- **Still your file.** Scripted edits go through the same writer as the editor,
+  so every guarantee under [Why](#why) holds and `git diff` shows only the boxes
+  that changed.
+- **Fast enough to loop on.** On 10,000 images, `stats` takes 0.2 s and
+  `annotate` 0.1 s.
+
+Stdout is JSON, stderr is notes, and exit codes are `0` ok, `1` problem found,
+`64` usage error. No server and no MCP setup are involved.
+
+**[Full guide: per-client setup, input formats, the JSON contract →](docs/agents.md)**
 
 ## Detecting from the CLI
 
@@ -207,7 +264,8 @@ Notes:
 
 ## Roadmap
 
-- YOLO / COCO import & export (the format layer is already pluggable)
+- YOLO import and YOLO / COCO export (COCO import already works through
+  `labelkit annotate --from`)
 
 ## License
 

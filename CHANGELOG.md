@@ -9,6 +9,44 @@ release notes, so every release needs a `## [X.Y.Z] - YYYY-MM-DD` heading here.
 
 ## [Unreleased]
 
+### Added
+
+- **Use labelkit from an AI agent.** `labelkit skill --install` teaches Claude
+  Code, Codex, opencode, Cursor, Gemini CLI, GitHub Copilot, Amp, Goose and
+  other clients how to label with labelkit, by installing an Agent Skill where
+  each of them looks for one (`--project` for a single repository,
+  `--snippet` for a few lines of `AGENTS.md` instead). The guide is built into
+  the binary, so it always matches the installed version. See
+  [docs/agents.md](docs/agents.md).
+- **`labelkit annotate`.** Write boxes into a dataset from the terminal: inline
+  (`--image a.jpg --box 'cat:40,30,200,160'`), or from JSON / NDJSON on a file
+  or stdin. It reads what vision models and other tools actually produce —
+  Gemini `box_2d`, corner lists, 0–1 and 0–1000 coordinates, YOLO-style
+  centres, COCO files, `labelkit detect` output — with `--units`, `--origin`,
+  `--anchor`, `--order` and `--image-size` to name a convention rather than
+  convert it. Adding is idempotent (a repeat run leaves the file byte-identical),
+  `--mode replace` corrects an image, `--negatives` records object-free images,
+  and a run with any unusable input writes nothing.
+- **`labelkit stats`.** A JSON summary of a dataset: labelled, negative,
+  unlabelled and missing images, boxes per label, and the image with the most
+  boxes.
+- **`labelkit validate`.** Checks a dataset and exits 1 on errors: missing
+  images, boxes outside their image, empty or unknown labels, duplicate
+  entries; and warns about overflowing boxes, duplicate boxes, and the same
+  photo saved under two names.
+- **`labelkit render`.** Draws a dataset's boxes onto downscaled pictures to
+  check labels by eye, numbered to match `validate`. `--grid N` adds a ruler in
+  original-image pixels and `--unlabeled` renders the images still to do.
+- **`labelkit <dataset> --select <image>`.** Opens the editor on a given image;
+  if the editor is already open it reloads the dataset and jumps there.
+
+### Changed
+
+- **Large datasets open and save faster.** Reading an annotations file,
+  listing the image folder and writing the file back were reworked; on a
+  10,000-image dataset saving is about five times faster and loading about
+  twice as fast. Saved files are byte-for-byte what they were before.
+
 ## [0.2.1] - 2026-11-28
 
 ### Added

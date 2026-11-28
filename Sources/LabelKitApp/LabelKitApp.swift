@@ -82,7 +82,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         window.makeKeyAndOrderFront(nil)
         Self.tryActivate()
         guard let request = SingleInstance.decodeOpenRequest(note) else { return }
-        appState.requestOpenFromCLI(request.location, imageGlob: request.imageGlob)
+        appState.requestOpenFromCLI(request.location, imageGlob: request.imageGlob, select: request.select)
     }
 
     private static func tryActivate() {

@@ -24,17 +24,20 @@ enum SingleInstance {
             .first { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
     }
 
-    static func postOpenRequest(location: DatasetLocation, imageGlob: String?) {
+    static func postOpenRequest(location: DatasetLocation, imageGlob: String?, select: String?) {
         var info: [String: String] = [
             "imagesDirectory": location.imagesDirectory.path,
             "annotationsURL": location.annotationsURL.path,
         ]
         if let imageGlob { info["imageGlob"] = imageGlob }
+        if let select { info["select"] = select }
         DistributedNotificationCenter.default().postNotificationName(
             openRequestNotification, object: nil, userInfo: info, deliverImmediately: true)
     }
 
-    static func decodeOpenRequest(_ note: Notification) -> (location: DatasetLocation, imageGlob: String?)? {
+    static func decodeOpenRequest(
+        _ note: Notification
+    ) -> (location: DatasetLocation, imageGlob: String?, select: String?)? {
         guard let info = note.userInfo,
               let directory = info["imagesDirectory"] as? String,
               let annotations = info["annotationsURL"] as? String else { return nil }
@@ -42,7 +45,7 @@ enum SingleInstance {
             imagesDirectory: URL(fileURLWithPath: directory),
             annotationsURL: URL(fileURLWithPath: annotations),
             annotationsExists: FileManager.default.fileExists(atPath: annotations))
-        return (location, info["imageGlob"] as? String)
+        return (location, info["imageGlob"] as? String, info["select"] as? String)
     }
 
     /// Activate through LaunchServices — macOS 14+ cooperative activation

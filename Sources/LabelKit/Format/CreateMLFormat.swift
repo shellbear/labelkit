@@ -23,39 +23,56 @@ public enum CreateMLFormat: AnnotationFormat {
     private static let annotationKeys: Set<String> = ["label", "coordinates"]
 
     public static func load(_ data: Data) throws -> [ImageAnnotationRecord] {
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [Any] else {
+        // JSONSerialization returns NSArray/NSDictionary. They are read as
+        // such: casting each one to a Swift dictionary copies it and bridges
+        // every key, which on a large file costs several times the parse itself.
+        guard let root = try JSONSerialization.jsonObject(with: data) as? NSArray else {
             throw CreateMLFormatError.rootIsNotArray
         }
-        return try root.enumerated().map { index, rawEntry in
-            let entry = rawEntry as? [String: Any] ?? [:]
-            guard let image = entry["image"] as? String else {
+        var records: [ImageAnnotationRecord] = []
+        records.reserveCapacity(root.count)
+        for (index, rawEntry) in root.enumerated() {
+            let entry = rawEntry as? NSDictionary
+            guard let image = entry?["image"] as? String else {
                 throw CreateMLFormatError.entryMissingImage(index: index)
             }
-            let rawAnnotations = entry["annotations"] as? [Any] ?? []
-            let boxes = rawAnnotations.compactMap { rawAnnotation -> BoxRecord? in
-                guard let annotation = rawAnnotation as? [String: Any] else { return nil }
-                let coordinates = annotation["coordinates"] as? [String: Any] ?? [:]
-                func value(_ key: String) -> Double { (coordinates[key] as? NSNumber)?.doubleValue ?? 0 }
-                return BoxRecord(
-                    label: annotation["label"] as? String ?? "unlabeled",
-                    x: value("x"), y: value("y"),
-                    width: value("width"), height: value("height"),
-                    extras: extras(of: annotation, excluding: annotationKeys)
-                )
+            var boxes: [BoxRecord] = []
+            if let rawAnnotations = entry?["annotations"] as? NSArray {
+                boxes.reserveCapacity(rawAnnotations.count)
+                for case let annotation as NSDictionary in rawAnnotations {
+                    let coordinates = annotation["coordinates"] as? NSDictionary
+                    func value(_ key: String) -> Double { (coordinates?[key] as? NSNumber)?.doubleValue ?? 0 }
+                    boxes.append(BoxRecord(
+                        label: (annotation["label"] as? String)?.native ?? "unlabeled",
+                        x: value("x"), y: value("y"),
+                        width: value("width"), height: value("height"),
+                        extras: extras(of: annotation, excluding: annotationKeys)
+                    ))
+                }
             }
-            return ImageAnnotationRecord(
-                image: image,
+            records.append(ImageAnnotationRecord(
+                image: image.native,
                 boxes: boxes,
-                extras: extras(of: entry, excluding: entryKeys)
-            )
+                extras: entry.map { extras(of: $0, excluding: entryKeys) } ?? [:]
+            ))
         }
+        return records
     }
 
     public static func serialize(_ records: [ImageAnnotationRecord]) -> Data {
         CreateMLWriter.serialize(records)
     }
 
-    private static func extras(of dict: [String: Any], excluding known: Set<String>) -> [String: JSONValue] {
-        dict.filter { !known.contains($0.key) }.mapValues(JSONValue.init)
+    private static func extras(of dict: NSDictionary, excluding known: Set<String>) -> [String: JSONValue] {
+        // Almost every entry carries only the modelled keys; count those
+        // instead of building a filtered copy to find that out.
+        let modelled = known.reduce(0) { $0 + (dict[$1] == nil ? 0 : 1) }
+        guard dict.count > modelled else { return [:] }
+        var result: [String: JSONValue] = [:]
+        for (key, value) in dict {
+            guard let key = key as? String, !known.contains(key) else { continue }
+            result[key.native] = JSONValue(value)
+        }
+        return result
     }
 }

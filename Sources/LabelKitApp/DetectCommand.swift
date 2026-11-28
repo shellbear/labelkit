@@ -74,7 +74,7 @@ struct DetectCommand: ParsableCommand {
                     imageURL: imageURL, detector: spec.detector,
                     maxDecodePixel: CGFloat(maxPixel), fallbackLabel: fallback)
             } catch {
-                warn("\(imageURL.lastPathComponent): \(describe(error))")
+                Headless.note("\(imageURL.lastPathComponent): \(Headless.describe(error))")
                 continue  // skip a bad image, keep processing the batch
             }
 
@@ -86,7 +86,7 @@ struct DetectCommand: ParsableCommand {
                 pixelSize: result.pixelSize, detections: detections)
             reports.append(report)
 
-            if format == .ndjson { print(encode(report, pretty: false)) }  // stream as we go
+            if format == .ndjson { print(Headless.json(report, pretty: false)) }  // stream as we go
             if render != nil {
                 try renderAnnotated(imageURL: imageURL, pixelSize: result.pixelSize,
                                     detections: detections, batch: images.count > 1)
@@ -99,9 +99,9 @@ struct DetectCommand: ParsableCommand {
         case .json:
             // A single image emits the object; a batch emits an array.
             if images.count == 1, let only = reports.first {
-                print(encode(only, pretty: true))
+                print(Headless.json(only, pretty: true))
             } else {
-                print(encode(reports, pretty: true))
+                print(Headless.json(reports, pretty: true))
             }
         case .text:
             print(renderText(reports))
@@ -131,7 +131,7 @@ struct DetectCommand: ParsableCommand {
                 let coreML = try CoreMLBoxDetector(modelURL: url)
                 return DetectorSpec(detector: coreML, name: coreML.name, source: "coreml")
             } catch {
-                throw ValidationError("Couldn't load model \(path): \(describe(error))")
+                throw ValidationError("Couldn't load model \(path): \(Headless.describe(error))")
             }
         case let (nil, kind?):
             // ArgumentParser already rejected any name outside the enum (and
@@ -169,19 +169,19 @@ struct DetectCommand: ParsableCommand {
                                  detections: [DetectionCandidate], batch: Bool) throws {
         guard let render else { return }
         guard let image = ImageDownsampler.decode(url: imageURL, maxPixel: CGFloat(maxPixel)) else {
-            warn("\(imageURL.lastPathComponent): couldn't decode for --render")
+            Headless.note("\(imageURL.lastPathComponent): couldn't decode for --render")
             return
         }
         let boxes = detections.map {
             RenderableBox(rect: $0.box.rect, label: $0.box.label, confidence: $0.confidence)
         }
         guard let png = BoxRenderer.renderPNG(image: image, sourceSize: pixelSize, boxes: boxes) else {
-            warn("\(imageURL.lastPathComponent): couldn't render overlay")
+            Headless.note("\(imageURL.lastPathComponent): couldn't render overlay")
             return
         }
         let outputURL = try renderDestination(for: imageURL, batch: batch, dest: render)
         try png.write(to: outputURL)
-        warn("wrote \(outputURL.path)")
+        Headless.note("wrote \(outputURL.path)")
     }
 
     /// A file when rendering one image to a `.png` path; otherwise a directory
@@ -206,16 +206,7 @@ struct DetectCommand: ParsableCommand {
             && isDirectory.boolValue
     }
 
-    // MARK: - Encoding
-
-    private func encode<T: Encodable>(_ value: T, pretty: Bool) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = pretty
-            ? [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            : [.sortedKeys, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(value) else { return "" }
-        return String(decoding: data, as: UTF8.self)
-    }
+    // MARK: - Text output
 
     private func renderText(_ reports: [DetectionReport]) -> String {
         var lines: [String] = []
@@ -231,23 +222,6 @@ struct DetectCommand: ParsableCommand {
             }
         }
         return lines.joined(separator: "\n")
-    }
-
-    // MARK: - Diagnostics
-
-    private func warn(_ message: String) {
-        FileHandle.standardError.write(Data("labelkit: \(message)\n".utf8))
-    }
-
-    private func describe(_ error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? "\(error)"
-    }
-}
-
-private extension String {
-    /// Left-justify to `width` for aligned text output (never truncates).
-    func padded(to width: Int) -> String {
-        count >= width ? self : self + String(repeating: " ", count: width - count)
     }
 }
 

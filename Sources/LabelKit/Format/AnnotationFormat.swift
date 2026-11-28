@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// One bounding box as it exists on disk: Create ML center-anchored pixels.
@@ -19,6 +20,14 @@ public struct BoxRecord: Equatable, Sendable {
         self.width = width
         self.height = height
         self.extras = extras
+    }
+}
+
+public extension BoxRecord {
+    /// The box as a rect with its origin at the top-left corner — the editor's
+    /// and renderer's view of the centre-anchored values stored on disk.
+    var rect: CGRect {
+        CGRect(x: x - width / 2, y: y - height / 2, width: width, height: height)
     }
 }
 

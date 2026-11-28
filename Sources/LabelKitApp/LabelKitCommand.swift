@@ -11,7 +11,11 @@ struct LabelKitCommand: ParsableCommand {
         commandName: "labelkit",
         abstract: "Annotate image datasets in Apple Create ML object-detection format.",
         version: labelkitVersion,
-        subcommands: [OpenCommand.self, DetectCommand.self, TrainCommand.self],
+        subcommands: [
+            OpenCommand.self, DetectCommand.self, TrainCommand.self,
+            StatsCommand.self, ValidateCommand.self, AnnotateCommand.self, RenderCommand.self,
+            SkillCommand.self,
+        ],
         defaultSubcommand: OpenCommand.self
     )
 }
@@ -34,6 +38,9 @@ struct OpenCommand: ParsableCommand {
     @Option(name: .long, help: "Glob filter for image filenames, e.g. '*.jpg'.")
     var images: String?
 
+    @Option(name: .long, help: "Image to show first (a filename in the dataset). With the editor already open, reloads the dataset and jumps to it.")
+    var select: String?
+
     @Flag(name: [.customShort("w"), .long],
           help: "Run one foreground instance tied to the window's lifetime — don't hand off to a running copy or relaunch via the .app. Blocks until the window closes. (Handy for scripting and tests.)")
     var wait = false
@@ -54,7 +61,7 @@ struct OpenCommand: ParsableCommand {
             let handedOff = MainActor.assumeIsolated { () -> Bool in
                 guard let running = SingleInstance.runningInstance() else { return false }
                 if let location {
-                    SingleInstance.postOpenRequest(location: location, imageGlob: images)
+                    SingleInstance.postOpenRequest(location: location, imageGlob: images, select: select)
                 }
                 SingleInstance.activate(running)
                 return true
@@ -73,6 +80,7 @@ struct OpenCommand: ParsableCommand {
                     arguments.append(contentsOf: ["--annotations", location.annotationsURL.path])
                 }
                 if let images { arguments.append(contentsOf: ["--images", images]) }
+                if let select { arguments.append(contentsOf: ["--select", select]) }
                 let open = Process()
                 open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
                 open.arguments = arguments
@@ -83,7 +91,7 @@ struct OpenCommand: ParsableCommand {
             }
         }
 
-        LaunchContext.current = LaunchContext(location: location, imageGlob: images)
+        LaunchContext.current = LaunchContext(location: location, imageGlob: images, select: select)
         MainActor.assumeIsolated { runLabelKitApp() } // never returns
     }
 
