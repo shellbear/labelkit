@@ -77,14 +77,14 @@ struct TrainCommand: ParsableCommand {
             maxIterations: maxIterations,
             validationSplitFraction: validationSplit > 0 ? validationSplit : nil)
 
-        warn("training \(records.count) image\(records.count == 1 ? "" : "s"), "
+        Headless.note("training \(records.count) image\(records.count == 1 ? "" : "s"), "
             + "\(labels.count) label\(labels.count == 1 ? "" : "s") → \(outputURL.path)")
 
         let result = try runTraining(location: location, outputURL: outputURL, options: options)
         let report = TrainingReport.make(
             algorithm: algorithm, maxIterations: maxIterations,
             result: result, images: records.count, labels: labels)
-        print(encode(report))
+        print(Headless.json(report))
     }
 
     // MARK: - Training
@@ -126,7 +126,7 @@ struct TrainCommand: ParsableCommand {
 
         switch box.value {
         case let .success(result)?: return result
-        case let .failure(error)?: throw TrainCommandError.failed(describe(error))
+        case let .failure(error)?: throw TrainCommandError.failed(Headless.describe(error))
         case nil: throw TrainCommandError.noModel
         }
     }
@@ -173,23 +173,6 @@ struct TrainCommand: ParsableCommand {
         }
         return location.imagesDirectory.deletingLastPathComponent()
             .appendingPathComponent("\(location.displayName).mlmodel")
-    }
-
-    // MARK: - Output
-
-    private func encode(_ report: TrainingReport) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(report) else { return "" }
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    private func warn(_ message: String) {
-        FileHandle.standardError.write(Data("labelkit: \(message)\n".utf8))
-    }
-
-    private func describe(_ error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? "\(error)"
     }
 }
 

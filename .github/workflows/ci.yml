@@ -46,3 +46,9 @@ jobs:
           else
             test $? -eq 64
           fi
+      # Smoke: the scripted subcommands (stats, validate, annotate, render,
+      # skill) run end to end on a throwaway dataset, stay headless, keep their
+      # exit codes (0 ok / 1 problem / 64 usage), and a repeated `annotate`
+      # leaves the file byte-identical.
+      - name: Smoke-test the scripted subcommands
+        run: ./scripts/smoke-scripted.sh

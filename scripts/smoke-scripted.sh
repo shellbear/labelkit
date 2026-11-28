@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# End-to-end smoke test of the scripted subcommands (stats, validate, annotate,
+# render, skill) against a built binary, on a throwaway dataset. It checks the
+# things unit tests can't: that the commands are wired into the CLI, stay
+# headless, and keep their exit-code contract (0 ok, 1 problem, 64 usage).
+#
+#   ./scripts/smoke-scripted.sh                       # uses .build/release/labelkit
+#   ./scripts/smoke-scripted.sh path/to/labelkit
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+lk="${1:-.build/release/labelkit}"
+[[ "$lk" = /* ]] || lk="$PWD/$lk"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+ds="$work/dataset"
+mkdir "$ds"
+cp docs/icon.png "$ds/a.png"          # any real image will do: 512x512
+cp docs/icon.png "$ds/b.png"
+printf 'x' >> "$ds/b.png"             # same picture, different bytes: not a duplicate file
+
+fail() { echo "smoke: $*" >&2; exit 1; }
+# expect <code> <command…>: run it, discard output, require that exit code.
+expect() {
+    local want="$1" got=0
+    shift
+    "$@" >/dev/null 2>&1 || got=$?
+    [[ "$got" -eq "$want" ]] || fail "expected exit $want, got $got: $*"
+}
+
+for command in stats validate annotate render skill; do
+    expect 0 "$lk" "$command" --help
+done
+
+# A folder with no annotations yet: stats works, validate says so with exit 1.
+expect 0 "$lk" stats "$ds"
+expect 1 "$lk" validate "$ds"
+
+# Write a box, then the same box again: the file must not change by a byte.
+expect 0 "$lk" annotate "$ds" --image a.png --box 'thing:10,20,100,80'
+cp "$ds/annotations.json" "$work/first.json"
+expect 0 "$lk" annotate "$ds" --image a.png --box 'thing:10,20,100,80'
+cmp -s "$ds/annotations.json" "$work/first.json" || fail "a repeated annotate changed the file"
+grep -q '"x": 60' "$ds/annotations.json" || fail "expected a centre-anchored x of 60 on disk"
+
+# Piped model-style input, in another convention, for the second image.
+echo '[{"box_2d": [100, 200, 500, 400], "label": "thing"}]' \
+    | "$lk" annotate "$ds" --image b.png --from - >/dev/null
+expect 0 "$lk" validate "$ds" --labels thing --strict
+
+# Bad input is refused whole: exit 1 and the file untouched.
+cp "$ds/annotations.json" "$work/before-bad.json"
+expect 1 "$lk" annotate "$ds" --image missing.png --box 'thing:1,1,5,5'
+expect 1 "$lk" annotate "$ds" --image a.png --box 'thing:9000,9000,5,5'
+cmp -s "$ds/annotations.json" "$work/before-bad.json" || fail "a refused annotate changed the file"
+
+# Usage errors are 64, before anything is read.
+expect 64 "$lk" annotate "$ds" --box 'thing:1,1,5,5'
+expect 64 "$lk" annotate "$ds" --image a.png --origin bottom-left --box 'thing:1,1,5,5'
+expect 64 "$lk" stats "$work/no-such-dataset"
+
+# Reports are JSON with the documented fields.
+"$lk" stats "$ds" | grep -q '"annotated" : 2' || fail "stats should count 2 annotated images"
+"$lk" validate "$ds" | grep -q '"ok" : true' || fail "validate should report ok"
+
+# Render writes one picture per image.
+expect 0 "$lk" render "$ds" --grid 100 --out "$work/out"
+[[ -s "$work/out/a.jpg" && -s "$work/out/b.jpg" ]] || fail "render didn't write both pictures"
+
+# The skill prints, matches the committed copy, and installs.
+"$lk" skill | cmp -s - skills/labelkit/SKILL.md || fail "labelkit skill differs from skills/labelkit/SKILL.md"
+expect 0 "$lk" skill --install --dir "$work/skills"
+[[ -s "$work/skills/labelkit/SKILL.md" ]] || fail "skill --install didn't write SKILL.md"
+"$lk" skill --snippet | grep -q 'labelkit stats' || fail "skill --snippet is missing its commands"
+
+echo "smoke: scripted subcommands ok"

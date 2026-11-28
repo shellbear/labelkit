@@ -24,16 +24,7 @@ public struct BoundingBox: Identifiable, Equatable, Sendable {
     }
 
     public init(record: BoxRecord) {
-        self.init(
-            label: record.label,
-            rect: CGRect(
-                x: record.x - record.width / 2,
-                y: record.y - record.height / 2,
-                width: record.width,
-                height: record.height
-            ),
-            extras: record.extras
-        )
+        self.init(label: record.label, rect: record.rect, extras: record.extras)
     }
 
     public var record: BoxRecord {

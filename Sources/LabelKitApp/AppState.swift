@@ -45,15 +45,18 @@ final class AppState {
         recentProjects = RecentProjects(defaults: defaults)
         recentLocations = recentProjects.locations
         if let location = launch.location {
-            open(location: location)
+            open(location: location, select: launch.select)
         }
     }
 
-    func open(location: DatasetLocation) {
+    /// - Parameter select: image to show first, if the dataset has it;
+    ///   otherwise (and by default) the first image in the list.
+    func open(location: DatasetLocation, select: String? = nil) {
         do {
             let opened = try DatasetStore(location: location, imageGlob: imageGlob)
             store = opened
-            selectSingle(opened.entries.first?.filename)
+            let requested = select.flatMap { opened.entry(for: $0)?.filename }
+            selectSingle(requested ?? opened.entries.first?.filename)
             loadError = nil
             recentProjects.record(opened.location)
             recentLocations = recentProjects.locations
@@ -149,10 +152,14 @@ final class AppState {
 
     /// A CLI invocation forwarded from another process — adopts that
     /// invocation's glob (nil = unfiltered), matching fresh-launch semantics.
-    func requestOpenFromCLI(_ location: DatasetLocation, imageGlob newGlob: String?) {
+    ///
+    /// Opening the dataset that is already open is how the window catches up
+    /// with changes made outside it (`labelkit annotate`): it reloads from
+    /// disk, and `select` then lands on the image to look at.
+    func requestOpenFromCLI(_ location: DatasetLocation, imageGlob newGlob: String?, select: String? = nil) {
         guard confirmDiscardIfDirty() else { return }
         imageGlob = newGlob
-        open(location: location)
+        open(location: location, select: select)
     }
 
     func removeRecent(_ location: DatasetLocation) {
