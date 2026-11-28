@@ -5,7 +5,6 @@
 
 [![Latest release](https://img.shields.io/github/v/release/shellbear/labelkit?sort=semver&color=blue)](https://github.com/shellbear/labelkit/releases/latest)
 [![CI](https://github.com/shellbear/labelkit/actions/workflows/ci.yml/badge.svg)](https://github.com/shellbear/labelkit/actions/workflows/ci.yml)
-[![Downloads](https://img.shields.io/github/downloads/shellbear/labelkit/total?color=success)](https://github.com/shellbear/labelkit/releases)
 [![Platform](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)](https://github.com/shellbear/labelkit/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/shellbear/labelkit?color=informational)](LICENSE)
 
