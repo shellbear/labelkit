@@ -31,6 +31,8 @@ public struct ValidationReport: Codable, Equatable, Sendable {
     public enum Code: String, Codable, Sendable, CaseIterable {
         /// The annotations file doesn't exist.
         case noAnnotationsFile = "no-annotations-file"
+        /// The annotations file exists but can't be read as Create ML JSON.
+        case invalidAnnotationsFile = "invalid-annotations-file"
         /// An entry's image file is not on disk.
         case missingImage = "missing-image"
         /// An image file exists but its size can't be read.
@@ -53,6 +55,21 @@ public struct ValidationReport: Codable, Equatable, Sendable {
         case unknownLabel = "unknown-label"
         /// An allowed label has no boxes at all.
         case unusedLabel = "unused-label"
+    }
+}
+
+public extension ValidationReport {
+    /// The report for a dataset whose annotations file can't be read at all:
+    /// one error saying why, so `validate` still answers on stdout.
+    static func unreadable(
+        location: DatasetLocation, reason: String, labelkitVersion version: String = labelkitVersion
+    ) -> ValidationReport {
+        ValidationReport(
+            schemaVersion: 1, labelkit: version,
+            dataset: location.imagesDirectory.path, annotations: location.annotationsURL.path,
+            ok: false, errors: 1, warnings: 0,
+            issues: [Issue(severity: .error, code: .invalidAnnotationsFile, image: nil, box: nil, label: nil,
+                           message: "the annotations file can't be read: \(reason)")])
     }
 }
 

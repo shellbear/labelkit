@@ -16,8 +16,9 @@ struct ValidateCommand: ParsableCommand {
           labelkit validate ./cards --labels card,coin
           labelkit validate ./cards --strict --format text
 
-        Errors (exit 1): no-annotations-file, missing-image, duplicate-entry,
-        empty-label, empty-box, box-outside-image, unknown-label.
+        Errors (exit 1): no-annotations-file, invalid-annotations-file,
+        missing-image, duplicate-entry, empty-label, empty-box,
+        box-outside-image, unknown-label.
         Warnings (exit 0 unless --strict): unreadable-image, box-overflows-image,
         duplicate-box, duplicate-image, unused-label.
 
@@ -41,7 +42,15 @@ struct ValidateCommand: ParsableCommand {
     var format: Headless.OutputFormat = .json
 
     func run() throws {
-        let document = try Headless.openDocument(path: path, annotations: annotations)
+        let location = try Headless.locate(path: path, annotations: annotations)
+        let document: DatasetDocument
+        do {
+            document = try DatasetDocument(location: location)
+        } catch {
+            // Unreadable annotations are exactly what validate exists to report.
+            emit(.unreadable(location: location, reason: Headless.describe(error)))
+            throw ExitCode(1)
+        }
         let allowed = labels?.split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
 
@@ -58,11 +67,15 @@ struct ValidateCommand: ParsableCommand {
             document, options: .init(allowedLabels: allowed, duplicateImages: duplicates),
             pixelSize: { sizes[$0] })
 
+        emit(report)
+        if !report.ok || (strict && report.warnings > 0) { throw ExitCode(1) }
+    }
+
+    private func emit(_ report: ValidationReport) {
         switch format {
         case .json: Headless.printJSON(report)
         case .text: print(text(report))
         }
-        if !report.ok || (strict && report.warnings > 0) { throw ExitCode(1) }
     }
 
     private func text(_ report: ValidationReport) -> String {

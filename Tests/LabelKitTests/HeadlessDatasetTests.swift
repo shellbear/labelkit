@@ -117,16 +117,33 @@ final class HeadlessDatasetTests: XCTestCase {
         try Data([0xFF]).write(to: outside)
         defer { try? FileManager.default.removeItem(at: outside) }
 
+        try Data([0xFF]).write(to: tempDir.appendingPathComponent(".hidden.jpg"))
         let document = try DatasetDocument(
             location: location,
-            onlyImages: ["c.jpg", "nope.jpg", "c.jpg", "a.jpg", "../\(outside.lastPathComponent)"])
-        XCTAssertEqual(document.imagesOnDisk, ["c.jpg", "a.jpg"], "existing ones, once each, never outside the folder")
+            onlyImages: ["c.jpg", "nope.jpg", "c.jpg", "a.jpg", "../\(outside.lastPathComponent)",
+                         "A.JPG", "C.jpg", "annotations.json", ".hidden.jpg"])
+        XCTAssertEqual(document.imagesOnDisk, ["c.jpg", "a.jpg"],
+                       "what a listing would return: images, spelled as stored, not hidden, in this folder")
         XCTAssertEqual(document.records.count, 3, "the annotations file is still read in full")
 
         // Past the threshold it falls back to a normal listing.
         let many = (0...DatasetDocument.listingThreshold).map { "img\($0).jpg" }
         XCTAssertEqual(try DatasetDocument(location: location, onlyImages: many).imagesOnDisk,
                        ["a.jpg", "b.jpg", "c.jpg", "d.jpg"])
+    }
+
+    func testImagesDirectoryIsRecognisedHoweverItIsSpelled() throws {
+        let document = try load()
+        XCTAssertTrue(document.isImagesDirectory(tempDir))
+        XCTAssertTrue(document.isImagesDirectory(URL(fileURLWithPath: tempDir.path + "/")))
+        XCTAssertTrue(document.isImagesDirectory(tempDir.appendingPathComponent("sub/..")))
+        let link = tempDir.deletingLastPathComponent().appendingPathComponent("link-\(UUID().uuidString)")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: tempDir)
+        defer { try? FileManager.default.removeItem(at: link) }
+        XCTAssertTrue(document.isImagesDirectory(link))
+
+        XCTAssertFalse(document.isImagesDirectory(tempDir.appendingPathComponent("renders")), "a subfolder is fine")
+        XCTAssertFalse(document.isImagesDirectory(tempDir.deletingLastPathComponent()))
     }
 
     // MARK: - Merge: add
@@ -224,7 +241,7 @@ final class HeadlessDatasetTests: XCTestCase {
         let saved = try XCTUnwrap(document.records.last?.boxes)
         XCTAssertEqual([saved[0].x, saved[0].y, saved[0].width, saved[0].height], [60, 30, 80, 40])
         XCTAssertEqual(saved[1].width, 33.33)
-        XCTAssertEqual(saved[1].x, 100.25 + 33.33 / 2)
+        XCTAssertEqual(saved[1].x, 116.92, "records hold the 2-decimal values the file will hold")
     }
 
     func testBoxHangingOverAnEdgeIsClampedAndCounted() throws {
@@ -282,12 +299,85 @@ final class HeadlessDatasetTests: XCTestCase {
         XCTAssertEqual(document.records[2].boxes.count, 1, "ghost.jpg untouched")
     }
 
-    func testReplaceWithNoBoxesLeavesANegativeNotAHole() throws {
+    /// `detect … | annotate --mode replace` lists every image, including the
+    /// ones where the detector found nothing. Those must not be wiped.
+    func testReplaceWithNoBoxesLeavesTheImageAloneUnlessNegativesAreAsked() throws {
+        var untouched = try load()
+        let skipped = AnnotationMerge.apply([ImportedImage(image: "b.jpg", boxes: [])],
+                                            to: &untouched, options: .init(mode: .replace), pixelSize: size)
+        XCTAssertFalse(skipped.changed)
+        XCTAssertTrue(skipped.outcomes.isEmpty)
+        XCTAssertEqual(untouched.records[0].boxes.count, 1)
+
+        var cleared = try load()
+        let result = AnnotationMerge.apply(
+            [ImportedImage(image: "b.jpg", boxes: [])], to: &cleared,
+            options: .init(mode: .replace, recordNegatives: true), pixelSize: size)
+        XCTAssertEqual(result.outcomes.first?.removed, 1)
+        XCTAssertEqual(cleared.records.map(\.image), ["b.jpg", "a.jpg", "ghost.jpg"], "a negative, not a hole")
+        XCTAssertTrue(cleared.records[0].boxes.isEmpty)
+    }
+
+    /// With --lenient the valid input is applied; an image whose every box was
+    /// refused must not be emptied by a replace.
+    func testReplaceLeavesAnImageAloneWhenAllItsBoxesWereRefused() throws {
         var document = try load()
-        _ = AnnotationMerge.apply([ImportedImage(image: "b.jpg", boxes: [])],
-                                  to: &document, options: .init(mode: .replace), pixelSize: size)
-        XCTAssertEqual(document.records.map(\.image), ["b.jpg", "a.jpg", "ghost.jpg"])
-        XCTAssertTrue(document.records[0].boxes.isEmpty)
+        let result = AnnotationMerge.apply(
+            [ImportedImage(image: "b.jpg", boxes: [pixels("card", 900, 900, 10, 10)])],
+            to: &document, options: .init(mode: .replace, recordNegatives: true), pixelSize: size)
+        XCTAssertEqual(result.problems.count, 1)
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(document.records[0].boxes.count, 1)
+    }
+
+    func testReplacingWithTheSameBoxesChangesNothing() throws {
+        var document = try load()
+        // b.jpg holds card centred 50,50 size 20x20 with an extra key; the same
+        // geometry without the extra is a real change, the second run is not.
+        let same = [ImportedImage(image: "b.jpg", boxes: [pixels("card", 40.001, 40.002, 20.003, 19.999)])]
+        XCTAssertTrue(AnnotationMerge.apply(same, to: &document, options: .init(mode: .replace), pixelSize: size).changed)
+        XCTAssertFalse(AnnotationMerge.apply(same, to: &document, options: .init(mode: .replace), pixelSize: size).changed)
+    }
+
+    // MARK: - Merge: boxes that must be refused
+
+    func testNegativeSizesAreRefusedNotFlipped() throws {
+        var document = try load()
+        let result = AnnotationMerge.apply([ImportedImage(image: "c.jpg", boxes: [
+            pixels("card", 100, 80, -50, -40),
+            ImportedBox(label: "card", geometry: .normalized(CGRect(x: 0.5, y: 0.5, width: -0.2, height: 0.2))),
+            ImportedBox(label: "card", geometry: .scaledPixels(
+                CGRect(x: 10, y: 10, width: 20, height: -5), reference: CGSize(width: 100, height: 50))),
+        ])], to: &document, pixelSize: size)
+        XCTAssertEqual(result.problems.count, 3)
+        XCTAssertTrue(result.problems.allSatisfy { $0.message.contains("positive") })
+        XCTAssertFalse(result.changed)
+    }
+
+    /// A box that would round to zero on disk could never match itself again.
+    func testBoxesSmallerThanAPixelAreRefused() throws {
+        var document = try load()
+        let result = AnnotationMerge.apply([ImportedImage(image: "c.jpg", boxes: [
+            pixels("card", 10, 10, 0.004, 0.004),
+            pixels("card", 10, 10, 50, 0.9),
+            ImportedBox(label: "card", geometry: .normalized(CGRect(x: 0.1, y: 0.1, width: 0.001, height: 0.5))),
+        ])], to: &document, pixelSize: size)
+        XCTAssertEqual(result.problems.map(\.message), Array(repeating: "box #1 (card): smaller than one pixel", count: 1)
+            + ["box #2 (card): smaller than one pixel", "box #3 (card): smaller than one pixel"])
+        XCTAssertFalse(result.changed)
+    }
+
+    /// Coordinates tied to a copy's size can't be placed without the real size;
+    /// writing them unscaled would be a guess.
+    func testResizedCopyCoordinatesNeedAReadableImage() throws {
+        var document = try load()
+        let box = ImportedBox(label: "card", geometry: .scaledPixels(
+            CGRect(x: 1, y: 1, width: 2, height: 2), reference: CGSize(width: 800, height: 600)))
+        let result = AnnotationMerge.apply([ImportedImage(image: "ghost.jpg", boxes: [box])],
+                                           to: &document, pixelSize: size)
+        XCTAssertEqual(result.problems.count, 1)
+        XCTAssertTrue(result.problems[0].message.contains("800x600"))
+        XCTAssertFalse(result.changed)
     }
 
     func testAnImageWithNoBoxesIsOnlyRecordedAsANegativeWhenAsked() throws {
@@ -422,6 +512,18 @@ final class HeadlessDatasetTests: XCTestCase {
         let report = DatasetValidator.validate(document, pixelSize: size)
         XCTAssertTrue(report.ok)
         XCTAssertTrue(report.issues.isEmpty)
+    }
+
+    func testUnreadableAnnotationsFileStillGetsAReport() throws {
+        let location = try XCTUnwrap(DatasetLocator.resolve(path: tempDir.path))
+        try Data(#"{"not": "an array"}"#.utf8).write(to: annotationsURL)
+        XCTAssertThrowsError(try DatasetDocument(location: location))
+
+        let report = ValidationReport.unreadable(location: location, reason: "not an array", labelkitVersion: "test")
+        XCTAssertFalse(report.ok)
+        XCTAssertEqual(report.errors, 1)
+        XCTAssertEqual(report.issues.map(\.code), [.invalidAnnotationsFile])
+        XCTAssertEqual(report.issues[0].message, "the annotations file can't be read: not an array")
     }
 
     func testValidateReportsAMissingAnnotationsFile() throws {

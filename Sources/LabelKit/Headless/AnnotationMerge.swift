@@ -24,9 +24,11 @@ public enum AnnotationMerge {
         /// In `add` mode, a new box overlapping an existing same-label box by
         /// more than this IoU counts as already present.
         public var dedupeIoU: CGFloat
-        /// Record an image supplied with no boxes as a negative example (an
-        /// entry with zero annotations). Off by default so that "the detector
-        /// found nothing" is never silently turned into training signal.
+        /// Act on an image supplied with no boxes: record it as a negative
+        /// example (an entry with zero annotations), which in `replace` mode
+        /// also means clearing the boxes it had. Off by default, in both
+        /// modes, so that "the detector found nothing" never silently becomes
+        /// training signal or wipes existing labels.
         public var recordNegatives: Bool
 
         public init(mode: Mode = .add, dedupeIoU: CGFloat = 0.5, recordNegatives: Bool = false) {
@@ -115,6 +117,10 @@ public enum AnnotationMerge {
                 }
             }
 
+            // "No boxes" only means something when asked for; and an image
+            // whose every box was refused is left alone rather than emptied.
+            if supplied.isEmpty ? !options.recordNegatives : resolved.isEmpty { continue }
+
             var boxes = existingIndex.map { document.records[$0].boxes } ?? []
             var added = 0, duplicates = 0, removed = 0
             switch options.mode {
@@ -135,10 +141,8 @@ public enum AnnotationMerge {
 
             if let existingIndex {
                 document.records[existingIndex].boxes = boxes
-            } else if !boxes.isEmpty || options.recordNegatives {
-                newRecords.append(ImageAnnotationRecord(image: image, boxes: boxes))
             } else {
-                continue  // nothing to record for an image with no entry and no boxes
+                newRecords.append(ImageAnnotationRecord(image: image, boxes: boxes))
             }
             outcomes.append(ImageOutcome(
                 image: image, added: added, duplicates: duplicates, removed: removed,
@@ -161,32 +165,41 @@ public enum AnnotationMerge {
         let label = box.label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !label.isEmpty else { return .failure(BoxImportError(message: "empty label")) }
 
+        // Judge the numbers as given: CGRect's own accessors would quietly
+        // flip a negative width or height into a positive one.
+        let given: CGRect
+        switch box.geometry {
+        case .pixels(let rect), .normalized(let rect), .scaledPixels(let rect, _): given = rect
+        }
+        guard given.origin.x.isFinite, given.origin.y.isFinite,
+              given.size.width.isFinite, given.size.height.isFinite,
+              given.size.width > 0, given.size.height > 0 else {
+            return .failure(BoxImportError(message: "width and height must be positive"))
+        }
+
         var rect: CGRect
         switch box.geometry {
-        case .pixels(let pixels):
-            rect = pixels
-        case .scaledPixels(let pixels, let reference):
-            // Same size (the usual case, e.g. `labelkit detect` output), or no
-            // way to tell: the numbers are used as they are, with no float
-            // round trip. Otherwise scale from the copy to the real image.
-            if let imageSize, imageSize != reference {
-                let sx = imageSize.width / reference.width, sy = imageSize.height / reference.height
-                rect = CGRect(x: pixels.minX * sx, y: pixels.minY * sy,
-                              width: pixels.width * sx, height: pixels.height * sy)
-            } else {
-                rect = pixels
+        case .pixels:
+            rect = given
+        case .scaledPixels(_, let reference):
+            guard let imageSize else {
+                return .failure(BoxImportError(
+                    message: "coordinates measured on a \(Int(reference.width))x\(Int(reference.height)) copy "
+                        + "need the image's own size, and the file can't be read"))
             }
-        case .normalized(let fraction):
+            // Same size (the usual case, e.g. `labelkit detect` output): the
+            // numbers are used as they are, with no float round trip.
+            // Otherwise scale from the copy to the real image.
+            let sx = imageSize.width / reference.width, sy = imageSize.height / reference.height
+            rect = imageSize == reference ? given : CGRect(
+                x: given.minX * sx, y: given.minY * sy, width: given.width * sx, height: given.height * sy)
+        case .normalized:
             guard let imageSize else {
                 return .failure(BoxImportError(
                     message: "normalized coordinates need the image's size, and the file can't be read"))
             }
-            rect = CGRect(x: fraction.minX * imageSize.width, y: fraction.minY * imageSize.height,
-                          width: fraction.width * imageSize.width, height: fraction.height * imageSize.height)
-        }
-        guard rect.width.isFinite, rect.height.isFinite, rect.minX.isFinite, rect.minY.isFinite,
-              rect.width > 0, rect.height > 0 else {
-            return .failure(BoxImportError(message: "width and height must be positive"))
+            rect = CGRect(x: given.minX * imageSize.width, y: given.minY * imageSize.height,
+                          width: given.width * imageSize.width, height: given.height * imageSize.height)
         }
 
         var wasClamped = false
@@ -202,8 +215,20 @@ public enum AnnotationMerge {
             wasClamped = abs(inside.width - rect.width) > 0.5 || abs(inside.height - rect.height) > 0.5
             rect = inside
         }
-        return .success((BoxRecord(label: label, x: rect.midX, y: rect.midY,
-                                   width: rect.width, height: rect.height), wasClamped))
+        // Coordinates are saved to 2 decimals, so a box under a pixel can round
+        // to nothing on disk — and then never match itself on a second run.
+        guard rect.width >= 1, rect.height >= 1 else {
+            return .failure(BoxImportError(message: "smaller than one pixel"))
+        }
+        // Hold the values the file will hold, so comparing records is the same
+        // as comparing saved bytes.
+        return .success((BoxRecord(label: label, x: saved(rect.midX), y: saved(rect.midY),
+                                   width: saved(rect.width), height: saved(rect.height)), wasClamped))
+    }
+
+    /// A coordinate at the precision `CreateMLWriter` stores.
+    private static func saved(_ value: CGFloat) -> Double {
+        (Double(value) * 100).rounded() / 100
     }
 
     private static func isSameBox(_ a: BoxRecord, _ b: BoxRecord, threshold: CGFloat) -> Bool {

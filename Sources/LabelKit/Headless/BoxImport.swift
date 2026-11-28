@@ -213,6 +213,11 @@ public enum BoxImportParser {
             switch whole {
             case let object as [String: Any]:
                 if let coco = try coco(from: object) { return coco }
+                if let image = options.image, !isImageEntry(object) {
+                    // A single box for the one named image.
+                    return [ImportedImage(image: image, boxes: [try box(
+                        from: object, at: "input (\(image))", convention: options.convention, options: options)])]
+                }
                 return [try image(from: object, at: "input", options: options)]
             case let array as [Any]:
                 if let image = options.image, array.contains(where: { !isImageEntry($0) }) {
@@ -282,14 +287,19 @@ public enum BoxImportParser {
     private static let labelKeys = ["label", "class", "name", "category"]
     private static let parallelLabelKeys = ["labels", "text_labels", "classes", "names"]
 
-    /// A model asked for JSON usually wraps it in a Markdown fence.
+    /// A model asked for JSON usually wraps it in a Markdown fence, on its own
+    /// lines or all on one. Returns what is between the first and last fence,
+    /// without an info string such as `json`.
     static func stripCodeFence(_ text: String) -> String {
-        guard let open = text.range(of: "```") else { return text }
-        let afterOpen = text[open.upperBound...]
-        guard let lineEnd = afterOpen.firstIndex(where: \.isNewline),
-              let close = afterOpen.range(of: "```", options: .backwards),
-              close.lowerBound > lineEnd else { return text }
-        return String(afterOpen[afterOpen.index(after: lineEnd)..<close.lowerBound])
+        guard let open = text.range(of: "```"),
+              let close = text.range(of: "```", options: .backwards),
+              close.lowerBound >= open.upperBound else { return text }
+        var body = text[open.upperBound..<close.lowerBound]
+        let info = body.prefix { $0.isLetter || $0.isNumber }
+        if !info.isEmpty, body.dropFirst(info.count).first?.isWhitespace == true {
+            body = body.dropFirst(info.count)
+        }
+        return String(body)
     }
 
     private static func isImageEntry(_ element: Any) -> Bool {
