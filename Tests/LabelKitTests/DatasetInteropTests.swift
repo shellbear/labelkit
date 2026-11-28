@@ -121,7 +121,9 @@ final class DatasetInteropTests: XCTestCase {
                        "1 0.750000 0.500000 0.200000 0.600000\n0 0.250000 0.500000 0.100000 0.200000\n")
         XCTAssertEqual(try read("labels/b.txt", in: out), "", "a negative is an empty label file")
         XCTAssertEqual(try read("classes.txt", in: out), "card\ncoin\n")
-        XCTAssertTrue(try read("data.yaml", in: out).contains("names:\n  0: 'card'\n  1: 'coin'\n"))
+        let yaml = try read("data.yaml", in: out)
+        XCTAssertTrue(yaml.contains("train: images\nval: images\nnames:\n  0: 'card'\n  1: 'coin'\n"))
+        XCTAssertFalse(yaml.contains("path:"), "a relative path would be resolved against YOLO's own datasets folder")
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.appendingPathComponent("images/a.png").path))
         XCTAssertEqual(report.files, ["data.yaml", "classes.txt", "labels/", "images/"])
     }
@@ -179,15 +181,23 @@ final class DatasetInteropTests: XCTestCase {
         try write("x", to: busy.appendingPathComponent("keep.txt"))
         XCTAssertThrowsError(try DatasetExport.run(source, to: busy, options: .init(format: .coco), pixelSize: { _ in nil }))
         XCTAssertEqual(try read("keep.txt", in: busy), "x")
+        // Only hidden clutter (a Finder .DS_Store) still counts as empty.
+        let finder = root.appendingPathComponent("finder")
+        try write("", to: finder.appendingPathComponent(".DS_Store"))
+        XCTAssertNoThrow(try DatasetExport.run(source, to: finder, options: .init(format: .coco),
+                                               pixelSize: { source.pixelSize(of: $0) }))
     }
 
     func testYOLOExportRefusesImagesThatWouldShareALabelFile() throws {
         try image("a.jpg", 10, 10, in: dataset)
         var source = try document()
         source.records.append(ImageAnnotationRecord(image: "a.jpg", boxes: []))
+        let out = root.appendingPathComponent("clash")
         XCTAssertThrowsError(try DatasetExport.run(
-            source, to: root.appendingPathComponent("clash"), options: .init(format: .yolo),
-            pixelSize: { source.pixelSize(of: $0) }))
+            source, to: out, options: .init(format: .yolo), pixelSize: { source.pixelSize(of: $0) })) {
+            XCTAssertEqual(($0 as? DatasetExport.ExportError)?.isUsage, false, "a problem with the data, not the call")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: out.path), "a failed export leaves no folder behind")
     }
 
     // MARK: - Reading other people's layouts
@@ -241,6 +251,17 @@ final class DatasetInteropTests: XCTestCase {
         }
     }
 
+    func testYOLOClassIDMustBeAWholeNumber() throws {
+        for bad in ["nan", "1e30", "1.5", "-1", "inf"] {
+            let yolo = root.appendingPathComponent("yolo-bad-\(bad)")
+            try image("z.png", 100, 100, in: yolo)
+            try write("\(bad) 0.5 0.5 0.2 0.2\n", to: yolo.appendingPathComponent("z.txt"))
+            XCTAssertThrowsError(try ForeignDatasetReader.read(at: yolo, format: .yolo), "class '\(bad)'") {
+                XCTAssertTrue((($0 as? ForeignDatasetError)?.message ?? "").contains("expected 'class cx cy w h'"))
+            }
+        }
+    }
+
     func testClassNameShapes() {
         XCTAssertEqual(ClassNames.parseYAML("nc: 2\nnames: ['cat', \"dog\"]\n"), ["cat", "dog"])
         XCTAssertEqual(ClassNames.parseYAML("names:\n- cat\n- dog\nother: 1\n"), ["cat", "dog"])
@@ -258,6 +279,31 @@ final class DatasetInteropTests: XCTestCase {
                     '1': coin
         """), ["card", "coin"])
         XCTAssertEqual(ClassNames.parseYAML("train: images\n"), [])
+    }
+
+    /// The shapes real `data.yaml` files use: trailing comments, quotes that
+    /// protect commas and colons, a list broken over lines.
+    func testClassNamesWithCommentsQuotesAndWrappedLists() {
+        XCTAssertEqual(ClassNames.parseYAML("names: ['cat', 'dog']  # class names\n"), ["cat", "dog"])
+        XCTAssertEqual(ClassNames.parseYAML("names:\n  0: cat  # feline\n  1: dog\n"), ["cat", "dog"])
+        XCTAssertEqual(ClassNames.parseYAML("names: [cat,\n        dog,\n        'traffic light']\nnc: 3\n"),
+                       ["cat", "dog", "traffic light"])
+        XCTAssertEqual(ClassNames.parseYAML(#"names: ["a, b", 'c: d', "e]"]"#), ["a, b", "c: d", "e]"])
+        XCTAssertEqual(ClassNames.parseYAML("names:\n  - 'it''s'\n  - \"say \\\"hi\\\"\"\n  - C#\n"),
+                       ["it's", "say \"hi\"", "C#"])
+    }
+
+    /// A label survives export and import whatever characters it contains.
+    func testAwkwardLabelsRoundTripThroughYOLO() throws {
+        var source = try document()
+        source.records[0].boxes = ["it's", "a, b", "x: y # z", "plain"].enumerated().map { index, label in
+            BoxRecord(label: label, x: Double(20 + index * 40), y: 50, width: 20, height: 20)
+        }
+        try source.save()
+        let (out, _) = try export(.yolo, to: "awkward")
+        let back = root.appendingPathComponent("awkward-back")
+        try importing(out, into: back)
+        XCTAssertEqual(Set(try document(back).records[0].boxes.map(\.label)), ["it's", "a, b", "x: y # z", "plain"])
     }
 
     func testHuggingFaceIntegerCategoriesTakeNamesFromTheCard() throws {
@@ -360,12 +406,144 @@ final class DatasetInteropTests: XCTestCase {
         XCTAssertNil(records.first { $0.image == "a.png" })
     }
 
-    func testNegativesAreOnlyRecordedWhenAsked() throws {
+    /// In someone else's dataset "no boxes" may mean negative or unlabelled, so
+    /// such images are left out entirely unless negatives are asked for.
+    func testImagesWithoutBoxesAreLeftOutUnlessNegativesAreAsked() throws {
         let (out, _) = try export(.yolo, to: "yolo")
         let target = root.appendingPathComponent("no-negatives")
-        try importing(out, into: target, options: .init())
+        let report = try importing(out, into: target, options: .init())
+        XCTAssertEqual(report.images, .init(found: 2, copied: 1, alreadyPresent: 0, withoutBoxes: 1))
         XCTAssertEqual(try document(target).records.map(\.image), ["a.png"])
-        XCTAssertEqual(try document(target).imagesOnDisk, ["a.png", "b.png"], "the image is still copied")
+        XCTAssertEqual(try document(target).imagesOnDisk, ["a.png"], "not copied either")
+    }
+
+    /// Download caches store images as symlinks to blobs. The file is imported,
+    /// under the dataset's name for it, not the link.
+    func testSymlinkedImagesAreImportedAndExportedAsFiles() throws {
+        let hf = root.appendingPathComponent("hf-links")
+        try image("abc123", 60, 40, in: root.appendingPathComponent("blobs"))
+        try FileManager.default.createDirectory(at: hf.appendingPathComponent("train"), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: root.appendingPathComponent("blobs/abc123"),
+                                         to: root.appendingPathComponent("blobs/abc123.png"))
+        try FileManager.default.createSymbolicLink(
+            atPath: hf.appendingPathComponent("train/pic.png").path, withDestinationPath: "../../blobs/abc123.png")
+        try write(#"{"file_name": "pic.png", "objects": {"bbox": [[5, 5, 20, 20]], "categories": ["thing"]}}"# + "\n",
+                  to: hf.appendingPathComponent("train/metadata.jsonl"))
+
+        let target = root.appendingPathComponent("from-links")
+        let report = try importing(hf, into: target)
+        XCTAssertEqual(report.images.copied, 1)
+        XCTAssertTrue(report.renamed.isEmpty)
+        let imported = target.appendingPathComponent("pic.png")
+        XCTAssertEqual(try imported.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink, false)
+        XCTAssertNotNil(try document(target).pixelSize(of: "pic.png"))
+
+        // And a dataset made of symlinks exports real files.
+        let linked = root.appendingPathComponent("linked-dataset")
+        try FileManager.default.createDirectory(at: linked, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: linked.appendingPathComponent("p.png").path, withDestinationPath: "../blobs/abc123.png")
+        try write(#"[{"image": "p.png", "annotations": []}]"#, to: linked.appendingPathComponent("annotations.json"))
+        let source = try document(linked)
+        let out = root.appendingPathComponent("linked-out")
+        _ = try DatasetExport.run(source, to: out, options: .init(format: .coco), pixelSize: { source.pixelSize(of: $0) })
+        XCTAssertEqual(try out.appendingPathComponent("p.png").resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink, false)
+    }
+
+    /// Crowded objects of one class overlap. They are separate boxes in the
+    /// source and must stay separate; only what the dataset already had is a duplicate.
+    func testOverlappingBoxesInTheSourceAreAllKept() throws {
+        let yolo = root.appendingPathComponent("crowd")
+        try image("c.png", 100, 100, in: yolo)
+        try write("0 0.5 0.5 0.4 0.4\n0 0.52 0.5 0.4 0.4\n0 0.5 0.53 0.4 0.4\n", to: yolo.appendingPathComponent("c.txt"))
+        let target = root.appendingPathComponent("crowd-in")
+        XCTAssertEqual(try importing(yolo, into: target).boxes, .init(added: 3, duplicates: 0, clamped: 0))
+        XCTAssertEqual(try importing(yolo, into: target).boxes, .init(added: 0, duplicates: 3, clamped: 0))
+    }
+
+    /// Two splits can each have an `a.png`. Both are imported, each with its own
+    /// boxes, and importing again recognises both.
+    func testSameFileNameInTwoSplitsStaysTwoImagesAndRepeatsCleanly() throws {
+        let coco = root.appendingPathComponent("splits")
+        try image("a.png", 100, 100, in: coco.appendingPathComponent("train"))
+        try image("a.png", 120, 90, in: coco.appendingPathComponent("val"))
+        try write(#"""
+        {"images":[{"id":1,"file_name":"train/a.png","width":100,"height":100},
+                   {"id":2,"file_name":"val/a.png","width":120,"height":90}],
+         "categories":[{"id":1,"name":"cat"},{"id":2,"name":"dog"}],
+         "annotations":[{"id":1,"image_id":1,"category_id":1,"bbox":[10,10,30,30]},
+                        {"id":2,"image_id":2,"category_id":2,"bbox":[50,40,60,40]}]}
+        """#, to: coco.appendingPathComponent("annotations.json"))
+
+        let foreign = try ForeignDatasetReader.read(at: coco)
+        XCTAssertEqual(foreign.images.map { $0.source.deletingLastPathComponent().lastPathComponent }, ["train", "val"])
+
+        let target = root.appendingPathComponent("splits-in")
+        let first = try importing(coco, into: target)
+        XCTAssertEqual(first.renamed, [.init(from: "a.png", to: "a-2.png")])
+        let records = try document(target).records
+        let labels = Dictionary(uniqueKeysWithValues: records.map { ($0.image, $0.boxes.map(\.label)) })
+        XCTAssertEqual(labels, ["a.png": ["cat"], "a-2.png": ["dog"]], "each image keeps its own boxes")
+        XCTAssertEqual(try document(target).pixelSize(of: "a-2.png"), CGSize(width: 120, height: 90))
+
+        let before = try FileManager.default.contentsOfDirectory(atPath: target.path).sorted()
+        let again = try importing(coco, into: target)
+        XCTAssertEqual(again.images, .init(found: 2, copied: 0, alreadyPresent: 2))
+        XCTAssertFalse(again.written)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: target.path).sorted(), before)
+    }
+
+    func testASymlinkedSourceFolderIsRead() throws {
+        let (out, _) = try export(.yolo, to: "yolo")
+        let link = root.appendingPathComponent("yolo-link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: out)
+        XCTAssertEqual(try ForeignDatasetReader.read(at: link).images.count, 2)
+    }
+
+    /// COCO sizes written before a photo's EXIF rotation can't be mapped onto
+    /// the image as displayed; that is reported, never guessed.
+    func testCoordinatesFromBeforeAnEXIFRotationAreAProblem() throws {
+        var destination = try document()
+        let box = ImportedBox(label: "card", geometry: .scaledPixels(
+            CGRect(x: 60, y: 10, width: 30, height: 20), reference: CGSize(width: 100, height: 200)))
+        // b.png is 100x200 on disk in the fixture; pretend it displays as 200x100.
+        let result = AnnotationMerge.apply([ImportedImage(image: "b.png", boxes: [box])], to: &destination,
+                                           pixelSize: { _ in CGSize(width: 200, height: 100) })
+        XCTAssertEqual(result.problems.count, 1)
+        XCTAssertTrue(result.problems[0].message.contains("EXIF rotation"))
+        XCTAssertFalse(result.changed)
+    }
+
+    func testAFailedCopyLeavesNothingBehind() throws {
+        let yolo = root.appendingPathComponent("unreadable")
+        try image("one.png", 50, 50, in: yolo)
+        try image("two.png", 50, 50, in: yolo)
+        try write("0 0.5 0.5 0.2 0.2\n", to: yolo.appendingPathComponent("one.txt"))
+        try write("0 0.5 0.5 0.2 0.2\n", to: yolo.appendingPathComponent("two.txt"))
+        let foreign = try ForeignDatasetReader.read(at: yolo)
+        // The file disappears between reading the dataset and copying it.
+        try FileManager.default.removeItem(at: yolo.appendingPathComponent("two.png"))
+
+        let target = root.appendingPathComponent("rolled-back")
+        var destination = try document(target)
+        XCTAssertThrowsError(try DatasetImport.run(foreign, into: &destination, options: .init(lenient: true)))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: target.path), [])
+    }
+
+    func testARefusedImportDoesNotCreateItsTarget() throws {
+        let yolo = root.appendingPathComponent("refused")
+        try image("bad.png", 100, 100, in: yolo)
+        try write("0 5.0 5.0 0.2 0.2\n", to: yolo.appendingPathComponent("bad.txt"))
+        let target = root.appendingPathComponent("never-made")
+        var destination = DatasetDocument(
+            location: DatasetLocation(imagesDirectory: target,
+                                      annotationsURL: target.appendingPathComponent("annotations.json"),
+                                      annotationsExists: false),
+            records: [], imagesOnDisk: [])
+        let report = try DatasetImport.run(try ForeignDatasetReader.read(at: yolo), into: &destination)
+        XCTAssertEqual(report.problems.count, 1)
+        XCTAssertEqual(report.images.copied, 0, "nothing was copied, so nothing is counted as copied")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
     }
 
     func testASourceWithAnUnusableBoxImportsNothingUnlessLenient() throws {
@@ -381,6 +559,7 @@ final class DatasetInteropTests: XCTestCase {
         XCTAssertEqual(refused.problems.count, 1)
         XCTAssertFalse(refused.written)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: strict.path), [], "nothing copied, nothing written")
+        XCTAssertEqual(refused.images.copied, 0)
 
         let lenient = root.appendingPathComponent("lenient")
         let applied = try importing(yolo, into: lenient, options: .init(lenient: true))

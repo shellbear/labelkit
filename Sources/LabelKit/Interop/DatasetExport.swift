@@ -45,6 +45,9 @@ public enum DatasetExport {
 
     public struct ExportError: LocalizedError, Equatable {
         public var message: String
+        /// True when the call was wrong (a bad `--out`), as opposed to a
+        /// dataset that can't be exported as it stands.
+        public var isUsage = false
         public var errorDescription: String? { message }
     }
 
@@ -62,11 +65,30 @@ public enum DatasetExport {
     ) throws -> Report {
         let fm = FileManager.default
         guard !document.isImagesDirectory(out) else {
-            throw ExportError(message: "the output folder is the dataset itself; choose another directory")
+            throw ExportError(message: "the output folder is the dataset itself; choose another directory",
+                              isUsage: true)
         }
-        if let existing = try? fm.contentsOfDirectory(atPath: out.path), !existing.isEmpty {
-            throw ExportError(message: "\(out.path) is not empty; export into a new or empty directory")
+        // Finder's .DS_Store and the like don't make a folder "not empty".
+        let existed = fm.fileExists(atPath: out.path)
+        if let existing = try? fm.contentsOfDirectory(atPath: out.path),
+           existing.contains(where: { !$0.hasPrefix(".") }) {
+            throw ExportError(message: "\(out.path) is not empty; export into a new or empty directory",
+                              isUsage: true)
         }
+        do {
+            return try write(document, to: out, options: options, version: version, pixelSize: pixelSize)
+        } catch {
+            // A half-written export would be refused as "not empty" next time.
+            if !existed { try? fm.removeItem(at: out) }
+            throw error
+        }
+    }
+
+    private static func write(
+        _ document: DatasetDocument, to out: URL, options: Options, version: String,
+        pixelSize: (String) -> CGSize?
+    ) throws -> Report {
+        let fm = FileManager.default
 
         let onDisk = Set(document.imagesOnDisk)
         var skipped: [Report.Skipped] = []
@@ -137,7 +159,9 @@ public enum DatasetExport {
             for (entry, path) in zip(entries, imagePaths) {
                 let destination = out.appendingPathComponent(path)
                 try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try fm.copyItem(at: document.imageURL(for: entry.record.image), to: destination)
+                // The file itself, even when the dataset holds a symlink to it.
+                try fm.copyItem(at: document.imageURL(for: entry.record.image).resolvingSymlinksInPath(),
+                                to: destination)
             }
             switch options.format {
             case .yolo: files.append("images/")
@@ -168,7 +192,9 @@ public enum DatasetExport {
 
     static func yoloConfig(_ labels: [String]) -> String {
         var text = "# Exported by labelkit. Every image is under train; make a validation split before training.\n"
-        text += "path: .\ntrain: images\nval: images\nnames:\n"
+        // No `path:` — YOLO tooling then resolves train/val against this file's
+        // own folder, wherever the export is moved to.
+        text += "train: images\nval: images\nnames:\n"
         for (index, label) in labels.enumerated() {
             text += "  \(index): \(yamlString(label))\n"
         }
@@ -191,8 +217,7 @@ public enum DatasetExport {
                 annotations.append([
                     "id": annotations.count + 1, "image_id": index + 1,
                     "category_id": (classID[box.label] ?? 0) + 1,
-                    "bbox": [hundredths(box.rect.minX), hundredths(box.rect.minY),
-                             hundredths(box.width), hundredths(box.height)],
+                    "bbox": pixelBox(box),
                     "area": hundredths(box.width * box.height), "iscrowd": 0,
                 ])
             }
@@ -213,8 +238,7 @@ public enum DatasetExport {
         let row: [String: Any] = [
             "file_name": fileName,
             "objects": [
-                "bbox": record.boxes.map { [hundredths($0.rect.minX), hundredths($0.rect.minY),
-                                             hundredths($0.width), hundredths($0.height)] },
+                "bbox": record.boxes.map(pixelBox),
                 "categories": record.boxes.map(\.label),
             ],
         ]
@@ -251,6 +275,12 @@ public enum DatasetExport {
     }
 
     // MARK: - Helpers
+
+    /// `[x, y, width, height]` in pixels from the top-left corner, as COCO and
+    /// Hugging Face both write a box.
+    private static func pixelBox(_ box: BoxRecord) -> [NSDecimalNumber] {
+        [hundredths(box.rect.minX), hundredths(box.rect.minY), hundredths(box.width), hundredths(box.height)]
+    }
 
     /// A coordinate at labelkit's 2-decimal precision, as a decimal number so
     /// JSON prints `810.03` rather than the nearest binary double's

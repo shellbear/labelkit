@@ -29,10 +29,15 @@ public struct ImportedBox: Equatable, Sendable {
 public struct ImportedImage: Equatable, Sendable {
     public var image: String
     public var boxes: [ImportedBox]
+    /// The image's path as the source wrote it, when that was more than a bare
+    /// name (COCO's `file_name` can be `train/a.jpg`). `image` is its last
+    /// component; `import` uses the path to find the right file.
+    public var path: String?
 
-    public init(image: String, boxes: [ImportedBox]) {
+    public init(image: String, boxes: [ImportedBox], path: String? = nil) {
         self.image = image
         self.boxes = boxes
+        self.path = path
     }
 }
 
@@ -378,7 +383,8 @@ public enum BoxImportParser {
                 throw BoxImportError(message: "COCO: an image entry is missing \"id\" or \"file_name\"")
             }
             order.append(id)
-            result[id] = ImportedImage(image: URL(fileURLWithPath: file).lastPathComponent, boxes: [])
+            let name = URL(fileURLWithPath: file).lastPathComponent
+            result[id] = ImportedImage(image: name, boxes: [], path: name == file ? nil : file)
             var convention = BoxConvention.pixelTopLeftCorner
             if let width = number(image["width"]), let height = number(image["height"]), width > 0, height > 0 {
                 convention.referenceSize = CGSize(width: width, height: height)

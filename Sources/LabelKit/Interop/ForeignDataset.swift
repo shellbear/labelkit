@@ -59,6 +59,8 @@ public enum ForeignDatasetReader {
     ///   without their `data.yaml`). They take precedence over any found.
     public static func read(at url: URL, format: DatasetFormat? = nil,
                             classNames: [String]? = nil) throws -> ForeignDataset {
+        // A folder reached through a symlink is listed as the folder it is.
+        let url = url.resolvingSymlinksInPath()
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
             throw ForeignDatasetError(message: "no such file or directory: \(url.path)", isUsage: true)
@@ -104,13 +106,10 @@ public enum ForeignDatasetReader {
                 throw ForeignDatasetError(message: "\(json.lastPathComponent): \(describe(error))")
             }
             for entry in parsed {
-                // COCO file names are relative to an images folder that varies
-                // by tool; the parser keeps the basename, which is looked up
-                // next to the JSON first and then anywhere in the dataset.
-                if let source = files.image(named: entry.image, near: json.deletingLastPathComponent()) {
+                if let source = files.cocoImage(path: entry.path ?? entry.image, annotationFile: json) {
                     result.images.append(.init(source: source, boxes: entry.boxes))
                 } else {
-                    result.missingImages.append(entry.image)
+                    result.missingImages.append(entry.path ?? entry.image)
                 }
             }
         }
@@ -136,13 +135,15 @@ public enum ForeignDatasetReader {
                 let fields = line.split(whereSeparator: \.isWhitespace)
                 if fields.isEmpty { continue }
                 let numbers = fields.compactMap { Double($0) }
-                guard numbers.count == fields.count, numbers.count >= 5, let rect = yoloRect(numbers.dropFirst()) else {
+                // `Int(exactly:)` rejects `nan`, `1e30` and `1.5`, any of which
+                // would otherwise crash or silently become another class.
+                guard numbers.count == fields.count, numbers.count >= 5,
+                      let classID = Int(exactly: numbers[0]), classID >= 0,
+                      let rect = yoloRect(numbers.dropFirst()) else {
                     throw ForeignDatasetError(
                         message: "\(label.lastPathComponent) line \(index + 1): expected 'class cx cy w h'")
                 }
-                let classIndex = Int(numbers[0])
-                let name = names.indices.contains(classIndex) ? names[classIndex] : "class_\(classIndex)"
-                boxes.append(ImportedBox(label: name, geometry: .normalized(rect)))
+                boxes.append(ImportedBox(label: className(classID, in: names), geometry: .normalized(rect)))
             }
             boxesByImage[image] = boxes
         }
@@ -226,13 +227,17 @@ public enum ForeignDatasetReader {
             let label: String
             switch index < labels.count ? labels[index] : nil {
             case let name as String: label = name
-            case let number as NSNumber:
-                label = names.indices.contains(number.intValue) ? names[number.intValue] : "class_\(number.intValue)"
+            case let number as NSNumber: label = className(number.intValue, in: names)
             default: throw ForeignDatasetError(message: "\(place): box #\(index + 1) has no category")
             }
             return ImportedBox(label: label, geometry: .pixels(
                 CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3])))
         }
+    }
+
+    /// The name for a numeric class id, or `class_<id>` when none is known.
+    private static func className(_ id: Int, in names: [String]) -> String {
+        names.indices.contains(id) ? names[id] : "class_\(id)"
     }
 
     private static func describe(_ error: Error) -> String {
@@ -272,8 +277,15 @@ public enum ClassNames {
         let inline = lines[start].trimmingCharacters(in: .whitespaces).dropFirst("names:".count)
             .trimmingCharacters(in: .whitespaces)
         if inline.hasPrefix("[") {
-            return inline.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-                .split(separator: ",").map { unquote(String($0)) }.filter { !$0.isEmpty }
+            // A flow list may run over several lines; read up to its closing bracket.
+            var body = String(inline.dropFirst())
+            var next = start + 1
+            while closingBracket(in: body) == nil, next < lines.count {
+                body += " " + lines[next]
+                next += 1
+            }
+            if let end = closingBracket(in: body) { body = String(body[..<end]) }
+            return splitOutsideQuotes(body, on: ",").map(scalar).filter { !$0.isEmpty }
         }
 
         let indent = lines[start].prefix { $0 == " " || $0 == "\t" }.count
@@ -285,10 +297,10 @@ public enum ClassNames {
             let depth = line.prefix { $0 == " " || $0 == "\t" }.count
             if trimmed.hasPrefix("- ") {
                 guard depth >= indent else { break }
-                listed.append(unquote(String(trimmed.dropFirst(2))))
+                listed.append(scalar(String(trimmed.dropFirst(2))))
             } else if depth > indent, let colon = trimmed.firstIndex(of: ":"),
-                      let index = Int(unquote(String(trimmed[..<colon]))) {
-                indexed[index] = unquote(String(trimmed[trimmed.index(after: colon)...]))
+                      let index = Int(scalar(String(trimmed[..<colon]))) {
+                indexed[index] = scalar(String(trimmed[trimmed.index(after: colon)...]))
             } else {
                 break
             }
@@ -298,8 +310,55 @@ public enum ClassNames {
         return (0...last).map { indexed[$0] ?? "class_\($0)" }
     }
 
-    private static func unquote(_ text: String) -> String {
-        text.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+    /// One YAML scalar: quoted (`'it''s'`, `"a, b"`) or plain, where a plain
+    /// value ends at a ` #` comment.
+    static func scalar(_ raw: String) -> String {
+        let text = raw.trimmingCharacters(in: .whitespaces)
+        guard let quote = text.first, quote == "'" || quote == "\"" else {
+            let value = text.range(of: " #").map { String(text[..<$0.lowerBound]) } ?? text
+            return value.trimmingCharacters(in: .whitespaces)
+        }
+        var value = ""
+        var rest = text.dropFirst()
+        while let character = rest.first {
+            rest = rest.dropFirst()
+            if character == quote {
+                // In single quotes a doubled quote is a literal one.
+                if quote == "'", rest.first == "'" { value.append("'"); rest = rest.dropFirst(); continue }
+                break
+            }
+            if character == "\\", quote == "\"", let escaped = rest.first {
+                value.append(escaped)
+                rest = rest.dropFirst()
+                continue
+            }
+            value.append(character)
+        }
+        return value
+    }
+
+    /// Where an unquoted `]` is, if there is one.
+    private static func closingBracket(in text: String) -> String.Index? {
+        var quote: Character?
+        for index in text.indices {
+            let character = text[index]
+            if let open = quote { if character == open { quote = nil } }
+            else if character == "'" || character == "\"" { quote = character }
+            else if character == "]" { return index }
+        }
+        return nil
+    }
+
+    private static func splitOutsideQuotes(_ text: String, on separator: Character) -> [String] {
+        var parts = [""]
+        var quote: Character?
+        for character in text {
+            if let open = quote { if character == open { quote = nil } }
+            else if character == "'" || character == "\"" { quote = character }
+            else if character == separator { parts.append(""); continue }
+            parts[parts.count - 1].append(character)
+        }
+        return parts
     }
 }
 
@@ -307,8 +366,8 @@ public enum ClassNames {
 /// where they keep things, so readers ask this for files by name or role
 /// instead of assuming paths.
 struct Tree {
-    let root: URL
-    private(set) var all: [URL] = []
+    private let root: URL
+    private var all: [URL] = []
     private(set) var images: [URL] = []
     private var imagesByName: [String: [URL]] = [:]
     /// Folder path + file stem → image, for matching a label file to its image.
@@ -317,31 +376,27 @@ struct Tree {
     /// Everything under `root`, a few levels deep (splits and their
     /// `images`/`labels` folders), hidden files skipped.
     init(root: URL) {
-        self.root = root
-        let enumerator = FileManager.default.enumerator(
-            at: root, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
-        var found: [URL] = []
-        while let url = enumerator?.nextObject() as? URL {
-            if enumerator?.level ?? 0 > 6 { enumerator?.skipDescendants(); continue }
-            found.append(url.standardizedFileURL)
+        self.root = root.standardizedFileURL
+        if let enumerator = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+            for case let url as URL in enumerator {
+                if enumerator.level > 6 { enumerator.skipDescendants(); continue }
+                all.append(url.standardizedFileURL)
+            }
         }
-        index(found.sorted { $0.path < $1.path })
+        all.sort { $0.path < $1.path }
+        images = all.filter(ImageImporter.isImageFile)
+        imagesByName = Dictionary(grouping: images, by: \.lastPathComponent)
+        for image in images {
+            let key = Self.key(image.deletingLastPathComponent().path, image.deletingPathExtension().lastPathComponent)
+            if imageByFolderAndStem[key] == nil { imageByFolderAndStem[key] = image }
+        }
     }
 
     /// A single annotation file plus the images around it.
     init(root: URL, only file: URL) {
         self.init(root: root)
         all = all.filter { $0.pathExtension.lowercased() != "json" } + [file.standardizedFileURL]
-    }
-
-    private mutating func index(_ urls: [URL]) {
-        all = urls
-        images = urls.filter(ImageImporter.isImageFile)
-        imagesByName = Dictionary(grouping: images, by: \.lastPathComponent)
-        for image in images {
-            let key = Self.key(image.deletingLastPathComponent().path, image.deletingPathExtension().lastPathComponent)
-            if imageByFolderAndStem[key] == nil { imageByFolderAndStem[key] = image }
-        }
     }
 
     private static func key(_ folder: String, _ stem: String) -> String { folder + "\u{0}" + stem }
@@ -361,19 +416,26 @@ struct Tree {
     /// JSON files that are COCO annotation files (checked by content, since
     /// their names follow no single convention).
     func cocoFiles() -> [URL] {
-        all.filter { $0.pathExtension.lowercased() == "json" }.filter { url in
-            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+        all.filter { url in
+            guard url.pathExtension.lowercased() == "json",
+                  let data = try? Data(contentsOf: url, options: .mappedIfSafe),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
             return object["images"] is [Any] && object["annotations"] is [Any] && object["categories"] is [Any]
         }
     }
 
-    /// An image by file name: next to `directory` if there, otherwise the only
-    /// one of that name anywhere in the dataset.
-    func image(named name: String, near directory: URL) -> URL? {
-        let candidates = imagesByName[name] ?? []
-        let base = directory.standardizedFileURL.path
-        return candidates.first { $0.path.hasPrefix(base + "/") } ?? (candidates.count == 1 ? candidates[0] : nil)
+    /// The image a COCO `file_name` refers to. Tools write that path relative
+    /// to different places, so it is tried against the annotation file's
+    /// folder, that folder's parent, and the dataset root; a bare name that
+    /// matches nothing there is accepted only if exactly one image in the
+    /// dataset has it. Two images that merely share a name are never confused.
+    func cocoImage(path: String, annotationFile: URL) -> URL? {
+        let folder = annotationFile.deletingLastPathComponent()
+        for base in [folder, folder.deletingLastPathComponent(), root] {
+            if let found = listedImage(at: base.appendingPathComponent(path)) { return found }
+        }
+        let sameName = imagesByName[(path as NSString).lastPathComponent] ?? []
+        return sameName.count == 1 ? sameName[0] : nil
     }
 
     // MARK: YOLO layout
@@ -388,8 +450,9 @@ struct Tree {
     /// `…/labels/train/a.txt` ↔ `…/images/train/a.jpg`, or the image beside it.
     func yoloImage(forLabel label: URL) -> URL? {
         let stem = label.deletingPathExtension().lastPathComponent
-        var folders = [label.deletingLastPathComponent().path]
-        var components = label.deletingLastPathComponent().pathComponents
+        let folder = label.deletingLastPathComponent()
+        var folders = [folder.path]
+        var components = folder.pathComponents
         if let index = components.lastIndex(of: "labels") {
             components[index] = "images"
             folders.append(NSString.path(withComponents: components))

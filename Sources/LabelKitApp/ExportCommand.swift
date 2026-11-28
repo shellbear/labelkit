@@ -60,7 +60,7 @@ struct ExportCommand: ParsableCommand {
             Headless.printJSON(try DatasetExport.run(
                 document, to: outURL, options: .init(format: format, copyImages: images),
                 pixelSize: { sizes[$0] }))
-        } catch let error as DatasetExport.ExportError {
+        } catch let error as DatasetExport.ExportError where error.isUsage {
             throw ValidationError(error.message)
         } catch {
             Headless.note("export failed: \(Headless.describe(error))")

@@ -32,8 +32,8 @@ struct ImportCommand: ParsableCommand {
         new one, reported under "renamed". Boxes are added the way 'annotate'
         adds them, so importing the same source twice changes nothing.
 
-        Source images that have no boxes are skipped unless --negatives is
-        given. If anything in the source can't be applied, nothing is copied or
+        Source images that have no boxes are left out (not copied) unless
+        --negatives is given, which brings them in as negative examples. If anything in the source can't be applied, nothing is copied or
         written and the command exits 1; --lenient applies the rest.
 
         stdout carries a JSON report. Exit 0 on success, 1 when there were
@@ -83,18 +83,21 @@ struct ImportCommand: ParsableCommand {
         }
 
         let datasetURL = URL(fileURLWithPath: (into as NSString).expandingTildeInPath)
-        if !dryRun {
-            do {
-                try FileManager.default.createDirectory(at: datasetURL, withIntermediateDirectories: true)
-            } catch {
-                throw ValidationError("Couldn't create \(into): \(Headless.describe(error))")
-            }
+        // A target inside the source would be read back as part of the source
+        // on the next run.
+        let sourceFolder = sourceURL.hasDirectoryPath || (try? sourceURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+            ? sourceURL : sourceURL.deletingLastPathComponent()
+        let sourcePath = sourceFolder.resolvingSymlinksInPath().standardizedFileURL.path
+        let targetPath = datasetURL.resolvingSymlinksInPath().standardizedFileURL.path
+        if targetPath == sourcePath || targetPath.hasPrefix(sourcePath + "/") {
+            throw ValidationError("--into is inside the dataset being imported; choose a folder outside \(source).")
         }
+
+        // The folder is only created once the import is known to go through.
         var document: DatasetDocument
         if FileManager.default.fileExists(atPath: datasetURL.path) {
             document = try Headless.openDocument(path: datasetURL.path, annotations: nil)
         } else {
-            // --dry-run into a folder that doesn't exist yet: an empty dataset.
             document = DatasetDocument(
                 location: DatasetLocation(
                     imagesDirectory: datasetURL,
