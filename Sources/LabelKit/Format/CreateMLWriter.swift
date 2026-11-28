@@ -18,7 +18,12 @@ public enum CreateMLWriter {
     ) -> Data {
         var out = String()
         out.reserveCapacity(records.count * 256)
-        let pad = { (depth: Int) in String(repeating: indentUnit, count: depth) }
+        // The writer asks for the same six indentation strings tens of
+        // thousands of times; build them once.
+        let cached = (0..<8).map { String(repeating: indentUnit, count: $0) }
+        let pad = { (depth: Int) in
+            depth < cached.count ? cached[depth] : String(repeating: indentUnit, count: depth)
+        }
 
         out.append("[")
         for (index, record) in records.enumerated() {
@@ -32,6 +37,25 @@ public enum CreateMLWriter {
     /// Canonical number formatting: round half-away-from-zero to 2 dp, then
     /// drop trailing zeros and a dangling decimal point.
     public static func coordString(_ value: Double) -> String {
+        // Work in whole hundredths: integer formatting is several times faster
+        // than `String(format:)`, and this runs four times per box.
+        let scaled = (value * 100).rounded()
+        guard scaled.isFinite, abs(scaled) < 1e15 else { return formattedCoordString(value) }
+        let hundredths = Int64(scaled)
+        let magnitude = hundredths.magnitude
+        let fraction = magnitude % 100
+        var text = hundredths < 0 ? "-" : ""
+        text += String(magnitude / 100)
+        if fraction != 0 {
+            text += fraction < 10 ? ".0" : "."
+            text += String(fraction % 10 == 0 ? fraction / 10 : fraction)
+        }
+        return text
+    }
+
+    /// The reference formatting, used directly only for values too large (or
+    /// not finite) for the integer path. `coordString` must agree with it.
+    static func formattedCoordString(_ value: Double) -> String {
         let rounded = (value * 100).rounded() / 100
         if rounded == rounded.rounded(), abs(rounded) < 1e15 {
             return String(Int(rounded))
@@ -100,6 +124,10 @@ public enum CreateMLWriter {
     }
 
     private static func escape(_ string: String) -> String {
+        // Nearly every label and filename needs no escaping at all.
+        if !string.utf8.contains(where: { $0 < 0x20 || $0 == UInt8(ascii: "\"") || $0 == UInt8(ascii: "\\") }) {
+            return "\"\(string)\""
+        }
         var out = "\""
         for scalar in string.unicodeScalars {
             switch scalar {
