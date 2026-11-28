@@ -1,0 +1,19 @@
+{
+  "name": "labelkit",
+  "owner": {
+    "name": "shellbear"
+  },
+  "metadata": {
+    "description": "Label images for object detection with the labelkit CLI."
+  },
+  "plugins": [
+    {
+      "name": "labelkit",
+      "source": "./",
+      "description": "Teaches Claude Code to label Apple Create ML object-detection datasets with the labelkit CLI: add and check bounding boxes, validate a dataset, run detectors, train a Core ML model.",
+      "homepage": "https://github.com/shellbear/labelkit",
+      "license": "MIT",
+      "skills": ["./skills/labelkit"]
+    }
+  ]
+}
